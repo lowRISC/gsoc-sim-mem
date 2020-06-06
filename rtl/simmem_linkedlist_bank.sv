@@ -2,9 +2,10 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 //
-// simmem top-level
 
 // This modules assumes that no capacity overflow occurs.
+
+`include "prim_assert.sv"
 
 module simmem_linkedlist_bank #(
   parameter int StructWidth   = 64, // Width of the message including identifier
@@ -14,7 +15,7 @@ module simmem_linkedlist_bank #(
   input logic clk_i,
   input logic rst_ni,
 
-  input logic [2**IDWidth-1:0] release_en; // Input from the releaser
+  input logic [2**IDWidth-1:0] release_en, // Input from the releaser
 
   input logic [StructWidth-1:0] data_i,
   output logic [StructWidth-1:0] data_o,
@@ -182,7 +183,6 @@ module simmem_linkedlist_bank #(
       for(int i = 0; i < 2 ** IDWidth; i = i + 1) begin
         heads_q[i] <= i;
         tails_q[i] <= i;
-        // empty_q[i] <= 1'b1;
       end
       ram_valid_q <= '0;
       output_buffers_valid_q <= '0;
@@ -190,10 +190,11 @@ module simmem_linkedlist_bank #(
       for(int i = 0; i < 2 ** IDWidth; i = i + 1) begin
         heads_q[i] <= heads_d[i];
         tails_q[i] <= tails_d[i];
-        // empty_q[i] <= empty_d[i];
       end
       ram_valid_q <= ram_valid_d;
       next_in_list_q <= next_in_list_d;
       output_buffers_valid_q <= output_buffers_valid_d;
     end
   end
+
+endmodule

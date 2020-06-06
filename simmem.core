@@ -2,16 +2,15 @@ CAPI=2:
 # Copyright lowRISC contributors.
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
-name: "lowrisc:ip:simmem:0.1"
+name: "::simmem:0.1"
 description: "Simulated memory controller"
+
 filesets:
   files_rtl:
     depend:
       - lowrisc:prim:all
-      - lowrisc:ip:tlul
     files:
-      - rtl/simmem_pkg.sv
-      - rtl/simmem.sv
+      - rtl/simmem_linkedlist_bank.sv
     file_type: systemVerilogSource
 
   files_verilator_waiver:
@@ -20,7 +19,7 @@ filesets:
       - lowrisc:lint:common
       - lowrisc:lint:comportable
     files:
-      - lint/aes.vlt
+      - lint/simmem.vlt
     file_type: vlt
 
   files_ascentlint_waiver:
@@ -28,7 +27,7 @@ filesets:
       # common waivers
       - lowrisc:lint:common
       - lowrisc:lint:comportable
-    files:
+    files:depend
       - lint/aes.waiver
     file_type: waiver
 
@@ -38,16 +37,10 @@ filesets:
       - lowrisc:lint:common
       - lowrisc:lint:comportable
 
-  files_formal:
-    files:
-      - dv/tb/aes_bind.sv
-    file_type: systemVerilogSource
-
 parameters:
   SYNTHESIS:
     datatype: bool
     paramtype: vlogdefine
-
 
 targets:
   default: &default_target
@@ -56,12 +49,6 @@ targets:
       - tool_ascentlint  ? (files_ascentlint_waiver)
       - tool_veriblelint ? (files_veriblelint_waiver)
       - target_formal    ? (files_formal)
-      - files_rtl
-    toplevel: aes
-
-  formal:
-    filesets:
-      - files_formal
       - files_rtl
     toplevel: aes
 
@@ -84,5 +71,3 @@ targets:
     default_tool: icarus
     parameters:
       - SYNTHESIS=true
-
-
