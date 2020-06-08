@@ -36,13 +36,13 @@ module simmem_linkedlist_bank #(
   logic [IDWidth-1:0] data_in_id;
 
   // Head, tail and empty signals
-  logic [IDWidth-1:0][$clog2(TotalCapacity)-1:0] heads_d, heads_q;
-  logic [IDWidth-1:0][$clog2(TotalCapacity)-1:0] tails_d, tails_q;
+  logic [2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] heads_d, heads_q;
+  logic [2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] tails_d, tails_q;
   logic [2**IDWidth-1:0] id_valid_ram;
 
   // Valid bit and pointer to next arrays
   logic [TotalCapacity-1:0] ram_valid_d, ram_valid_q, ram_valid_in_mask, ram_valid_out_mask;
-  logic [IDWidth-1:0] ram_valid_apply_in_mask_id, ram_valid_apply_out_mask_id;
+  logic [2**IDWidth-1:0] ram_valid_apply_in_mask_id, ram_valid_apply_out_mask_id;
   logic [TotalCapacity-1:0][$clog2(TotalCapacity)-1:0] next_in_list_d, next_in_list_q;
 
   always_comb begin: ram_valid_apply_masks
@@ -73,8 +73,8 @@ module simmem_linkedlist_bank #(
   // RAM instance and management signals
   logic [1:0]               req_ram, write_ram;
   logic [1:0][$clog2(TotalCapacity)-1:0] addr_ram;
-  logic [1:0][IDWidth-1:0]  req_ram_id, write_ram_id;
-  logic [1:0][$clog2(TotalCapacity)-1:0][IDWidth-1:0] addr_ram_id;
+  logic [1:0][2**IDWidth-1:0]  req_ram_id, write_ram_id;
+  logic [1:0][2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] addr_ram_id;
 
   logic [StructListElementWidth-1:0] wmask_struct_ram;
   logic [$clog2(TotalCapacity)-1:0] wmask_next_elem_ram;
@@ -84,8 +84,12 @@ module simmem_linkedlist_bank #(
     assign req_ram[ram_bank] = |req_ram_id[ram_bank];
     assign write_ram[ram_bank] = |write_ram_id[ram_bank];
 
-    for (genvar current_address_bin = 0; current_address_bin < $clog2(TotalCapacity); current_address_bin = current_address_bin+1) begin
-      assign addr_ram[ram_bank][current_address_bin] = |addr_ram_id[ram_bank][current_address_bin];
+    assign addr_ram[ram_bank] = '0;
+
+    always_comb begin
+      for (int current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
+        assign addr_ram[ram_bank] = addr_ram[ram_bank] | addr_ram_id[ram_bank][current_id];
+      end
     end
   end
 
@@ -185,7 +189,7 @@ module simmem_linkedlist_bank #(
         req_ram_id[ram_bank][current_id] = 1'b0;
         write_ram_id[ram_bank][current_id] = 1'b0;
         for (int current_address_bin = 0; current_address_bin < $clog2(TotalCapacity); current_address_bin = current_address_bin + 1) begin // SIMPLIFY Is the for loop useful?
-          addr_ram_id[ram_bank][current_address_bin][current_id] = 1'b0;
+          addr_ram_id[ram_bank][current_id][current_address_bin] = 1'b0;
         end
       end
 
