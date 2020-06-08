@@ -38,7 +38,7 @@ module simmem_linkedlist_bank #(
   // Head, tail and empty signals
   logic [IDWidth-1:0][$clog2(TotalCapacity)-1:0] heads_d, heads_q;
   logic [IDWidth-1:0][$clog2(TotalCapacity)-1:0] tails_d, tails_q;
-  logic [IDWidth-1:0] id_valid_ram;
+  logic [2**IDWidth-1:0] id_valid_ram;
 
   // Valid bit and pointer to next arrays
   logic [TotalCapacity-1:0] ram_valid_d, ram_valid_q, ram_valid_in_mask, ram_valid_out_mask;
@@ -60,34 +60,38 @@ module simmem_linkedlist_bank #(
   logic [$clog2(TotalCapacity)-1:0] next_free_ram_entry_binary;
   
   for (genvar current_address=0; current_address<TotalCapacity; current_address=current_address+1) begin
-    if (next_free_ram_entry_onehot[current_address]) begin
-      assign next_free_ram_entry_binary = data_o | current_address;
+    always_comb begin
+      if (next_free_ram_entry_onehot[current_address]) begin
+        assign next_free_ram_entry_binary = data_o | current_address;
+      end
     end
   end
 
-
-
-  // Finds the next id to release
+  // Finds the next id to release (one-hot)
   logic [2**IDWidth-1:0] next_id_to_release;
 
   // RAM instance and management signals
   logic [1:0]               req_ram, write_ram;
   logic [1:0][$clog2(TotalCapacity)-1:0] addr_ram;
   logic [1:0][IDWidth-1:0]  req_ram_id, write_ram_id;
-  logic [1:0][IDWidth-1:0][$clog2(TotalCapacity)-1:0] addr_ram_id;
+  logic [1:0][$clog2(TotalCapacity)-1:0][IDWidth-1:0] addr_ram_id;
 
   logic [StructListElementWidth-1:0] wmask_struct_ram;
   logic [$clog2(TotalCapacity)-1:0] wmask_next_elem_ram;
 
-  for (genvar ram_bank = 0; ram_bank < 2; ram_bank = ram_bank+1) begin // SIMPLIFY Is the for loop useful?
+  for (genvar ram_bank = 0; ram_bank < 2; ram_bank = ram_bank+1) begin
     // Aggregate the ram requests
     assign req_ram[ram_bank] = |req_ram_id[ram_bank];
     assign write_ram[ram_bank] = |write_ram_id[ram_bank];
-    assign addr_ram[ram_bank] = |addr_ram_id[ram_bank];
+
+    for (genvar current_address_bin = 0; current_address_bin < $clog2(TotalCapacity); current_address_bin = current_address_bin+1) begin
+      assign addr_ram[ram_bank][current_address_bin] = |addr_ram_id[ram_bank][current_address_bin];
+    end
   end
 
   logic [StructWidth-IDWidth-1:0] data_in_noid, data_in_next_elem_ram;
-  logic [1:0][StructWidth-IDWidth-1:0] data_out_ram;
+  logic [StructWidth-IDWidth-1:0] data_out_struct_ram;
+  logic [$clog2(TotalCapacity)-1:0] data_out_next_elem_ram;
 
   assign data_in_noid = data_i[StructWidth-1-IDWidth:0];
   assign wmask_struct_ram = {StructListElementWidth{1'b1}};
@@ -104,7 +108,7 @@ module simmem_linkedlist_bank #(
     .wmask_i   (wmask_struct_ram),
     .addr_i    (addr_ram[STRUCT_RAM]),
     .wdata_i   (data_in_noid),
-    .rdata_o   (data_out_ram[STRUCT_RAM])
+    .rdata_o   (data_out_struct_ram)
   );
 
   prim_ram_1p #(
@@ -118,7 +122,7 @@ module simmem_linkedlist_bank #(
     .wmask_i   (wmask_next_elem_ram),
     .addr_i    (addr_ram[NEXT_ELEM_RAM]),
     .wdata_i   (next_free_ram_entry_binary),
-    .rdata_o   (data_out_ram[NEXT_ELEM_RAM])
+    .rdata_o   (data_out_next_elem_ram)
   );
 
   // Next free addresses
@@ -132,7 +136,11 @@ module simmem_linkedlist_bank #(
 
   // Next Id to release from RAM
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
-    assign next_id_to_release[current_id] = id_valid_ram[current_id] && release_en[current_id] && ~|(id_valid_ram[current_id-1:0] & release_en[current_id-1:0]);
+    if (current_id == 0) begin
+      assign next_id_to_release[current_id] = id_valid_ram[current_id] && release_en[current_id];
+    end else begin
+      assign next_id_to_release[current_id] = id_valid_ram[current_id] && release_en[current_id] && ~|(id_valid_ram[current_id-1:0] & release_en[current_id-1:0]);
+    end
   end
 
   // IdValid signals
@@ -146,10 +154,12 @@ module simmem_linkedlist_bank #(
   // IdValid signals, ramValid masks
   for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin
     for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
-      if (heads_q[current_id] == current_address) begin
-        assign id_valid_ram[current_id] = ram_valid_q[current_address];
+      always_comb begin
+        if (heads_q[current_id] == current_address) begin
+          assign id_valid_ram[current_id] = ram_valid_q[current_address];
 
-        assign ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
+          assign ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
+        end
       end
     end
     assign ram_valid_in_mask[current_address] = next_free_ram_entry_binary == current_address ? 1'b1 : 1'b0;
@@ -174,7 +184,9 @@ module simmem_linkedlist_bank #(
       for (int ram_bank = 0; ram_bank < 2; ram_bank = ram_bank + 1) begin // SIMPLIFY Is the for loop useful?
         req_ram_id[ram_bank][current_id] = 1'b0;
         write_ram_id[ram_bank][current_id] = 1'b0;
-        addr_ram_id[ram_bank][current_id] = '0;
+        for (int current_address_bin = 0; current_address_bin < $clog2(TotalCapacity); current_address_bin = current_address_bin + 1) begin // SIMPLIFY Is the for loop useful?
+          addr_ram_id[ram_bank][current_address_bin][current_id] = 1'b0;
+        end
       end
 
       // Handshakes: start by output to avoid blocking output with inputs
@@ -184,7 +196,7 @@ module simmem_linkedlist_bank #(
         addr_ram_id[STRUCT_RAM][current_id] = heads_q[current_id];
 
         // Assign the output data and plug the identifier again
-        data_o = {current_id, data_out_ram[STRUCT_RAM]};
+        data_o = {current_id, data_out_struct_ram};
 
         // Free the head entry in the RAM
         ram_valid_apply_out_mask_id[current_id] = 1'b1;
@@ -193,7 +205,7 @@ module simmem_linkedlist_bank #(
         req_ram_id[NEXT_ELEM_RAM][current_id] = 1'b1;
         write_ram_id[NEXT_ELEM_RAM][current_id] = 1'b1;
         addr_ram_id[NEXT_ELEM_RAM][current_id] = heads_q[current_id];
-        heads_d[current_id] = data_out_ram[NEXT_ELEM_RAM];
+        heads_d[current_id] = data_out_next_elem_ram;
 
       end else if (in_valid_i && in_ready_o && current_id == data_in_id) begin
 
