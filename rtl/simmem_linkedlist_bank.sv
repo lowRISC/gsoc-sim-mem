@@ -33,15 +33,15 @@ module simmem_linkedlist_bank #(
   localparam int StructListElementWidth = StructWidth  - IDWidth;
 
   // Read the data ID
-  logic [IDWidth-1:0] data_in_id;
-  assign data_in_id = data_i[IDWidth-1:0];
+  logic [IDWidth-1:0] data_in_id_field;
+  assign data_in_id_field = data_i[IDWidth-1:0];
 
-  // Head, tail and empty signals
+  // Head, tail and non-empty signals
   logic [2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] heads_d, heads_q;
   logic [2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] tails_d, tails_q;
   logic [2**IDWidth-1:0] id_valid_ram;
 
-  // Valid bit and pointer to next arrays
+  // Valid bits and pointer to next arrays. Masks update the valid bits
   logic [TotalCapacity-1:0] ram_valid_d, ram_valid_q, ram_valid_in_mask, ram_valid_out_mask;
   logic [2**IDWidth-1:0] ram_valid_apply_in_mask_id, ram_valid_apply_out_mask_id;
 
@@ -59,11 +59,11 @@ module simmem_linkedlist_bank #(
   assign ram_valid_d = ram_valid_q ^ (ram_valid_in_mask & {TotalCapacity{|ram_valid_apply_in_mask_id}}) ^ (ram_valid_out_mask & {TotalCapacity{|ram_valid_apply_out_mask_id}});
 
   // Merge output data
-  logic [2**IDWidth-1:0] data_o_id_id;
+  logic [2**IDWidth-1:0] is_data_o_id;
   logic [2**IDWidth-1:0][IDWidth-1:0] data_o_id_mask;
   logic [IDWidth-1:0][2**IDWidth-1:0] data_o_id_mask_rot90;
   for (genvar current_id = 0; current_id < 2**IDWidth; current_id = current_id + 1) begin
-    assign data_o_id_mask[current_id] = current_id[IDWidth-1:0] & {IDWidth{data_o_id_id[current_id]}};
+    assign data_o_id_mask[current_id] = current_id[IDWidth-1:0] & {IDWidth{is_data_o_id[current_id]}};
   end
   for (genvar i = 0; i < 2**IDWidth; i = i + 1) begin
     for (genvar j = 0; j < IDWidth; j = j + 1) begin
@@ -96,16 +96,16 @@ module simmem_linkedlist_bank #(
   // Find the next id to release (one-hot)
   logic [2**IDWidth-1:0] next_id_to_release;
 
-  // RAM instance and management signals
-  logic [1:0]               req_ram, write_ram;
-  logic [1:0][2**IDWidth-1:0]  req_ram_id, write_ram_id;
+  // RAM instances and management signals
+  logic [1:0] req_ram, write_ram;
+  logic [1:0][2**IDWidth-1:0] req_ram_id, write_ram_id;
   
   logic [StructListElementWidth-1:0] wmask_struct_ram;
   logic [$clog2(TotalCapacity)-1:0] wmask_next_elem_ram;
   
   logic [1:0][$clog2(TotalCapacity)-1:0] addr_ram;
   logic [1:0][2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] addr_ram_id;
-  logic [1:0][$clog2(TotalCapacity)-1:0][2**IDWidth-1:0] addr_ram_id_masks_rot90;
+  logic [1:0][$clog2(TotalCapacity)-1:0][2**IDWidth-1:0] addr_ram_masks_rot90;
 
   for (genvar ram_bank = 0; ram_bank < 2; ram_bank = ram_bank+1) begin
     // Aggregate the ram requests
@@ -114,11 +114,11 @@ module simmem_linkedlist_bank #(
 
     for (genvar i = 0; i < 2**IDWidth; i = i + 1) begin
       for (genvar j = 0; j < $clog2(TotalCapacity); j = j + 1) begin
-        assign addr_ram_id_masks_rot90[ram_bank][j][i] = addr_ram_id[ram_bank][i][j];
+        assign addr_ram_masks_rot90[ram_bank][j][i] = addr_ram_id[ram_bank][i][j];
       end
     end
     for (genvar current_address_bit = 0; current_address_bit < $clog2(TotalCapacity); current_address_bit = current_address_bit + 1) begin
-      assign addr_ram[ram_bank][current_address_bit] = |addr_ram_id_masks_rot90[ram_bank][current_address_bit];
+      assign addr_ram[ram_bank][current_address_bit] = |addr_ram_masks_rot90[ram_bank][current_address_bit];
     end
   end
 
@@ -181,9 +181,8 @@ module simmem_linkedlist_bank #(
     for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
       always_comb begin
         if (heads_q[current_id] == current_address) begin
-          assign id_valid_ram[current_id] = ram_valid_q[current_address];
-
-          assign ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
+          id_valid_ram[current_id] = ram_valid_q[current_address];
+          ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
         end
       end
     end
@@ -204,7 +203,7 @@ module simmem_linkedlist_bank #(
       tails_d[current_id] = tails_q[current_id];
       ram_valid_apply_in_mask_id[current_id] = 1'b0;
       ram_valid_apply_out_mask_id[current_id] = 1'b0;
-      data_o_id_id[current_id] = 1'b0;
+      is_data_o_id[current_id] = 1'b0;
 
       // Default RAM signals
       for (int ram_bank = 0; ram_bank < 2; ram_bank = ram_bank + 1) begin
@@ -219,7 +218,7 @@ module simmem_linkedlist_bank #(
         addr_ram_id[STRUCT_RAM][current_id] = heads_q[current_id];
 
         // Assign the output data
-        data_o_id_id[current_id] = 1'b1;
+        is_data_o_id[current_id] = 1'b1;
 
         // Free the head entry in the RAM
         ram_valid_apply_out_mask_id[current_id] = 1'b1;
@@ -230,7 +229,7 @@ module simmem_linkedlist_bank #(
         addr_ram_id[NEXT_ELEM_RAM][current_id] = heads_q[current_id];
         heads_d[current_id] = data_out_next_elem_ram;
 
-      end else if (in_valid_i && in_ready_o && current_id == data_in_id) begin
+      end else if (in_valid_i && in_ready_o && current_id == data_in_id_field) begin
 
         // Mark address as taken
         ram_valid_apply_in_mask_id[current_id] = 1'b1;

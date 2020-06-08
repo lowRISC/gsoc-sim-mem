@@ -34,7 +34,6 @@ targets:
       verilator:
         verilator_options:
           - "-Wall"
-          - "-V"
     filesets:
       - files_rtl_linkedlist_bank
     toplevel: simmem_linkedlist_bank
