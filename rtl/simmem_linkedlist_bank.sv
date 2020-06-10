@@ -37,12 +37,12 @@ module simmem_linkedlist_bank #(
     assign data_in_id_field = data_i[IDWidth-1:0];
   
     // Head, tail and non-empty signals
-    logic [$clog2(TotalCapacity)-1:0] heads_d [2**IDWidth-1:0];
-    logic [$clog2(TotalCapacity)-1:0] heads_q [2**IDWidth-1:0];
-    logic [$clog2(TotalCapacity)-1:0] tails_d [2**IDWidth-1:0];
-    logic [$clog2(TotalCapacity)-1:0] tails_q [2**IDWidth-1:0];
-    logic [$clog2(TotalCapacity)-1:0] linkedlist_length_d [2**IDWidth-1:0];
-    logic [$clog2(TotalCapacity)-1:0] linkedlist_length_q [2**IDWidth-1:0];
+    logic [2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] heads_d; // TODO Unpack
+    logic [2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] heads_q; // TODO Unpack
+    logic [2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] tails_d; // TODO Unpack
+    logic [2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] tails_q; // TODO Unpack 
+    logic [2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] linkedlist_length_d; // TODO Unpack 
+    logic [2**IDWidth-1:0][$clog2(TotalCapacity)-1:0] linkedlist_length_q; // TODO Unpack
     logic [2**IDWidth-1:0] id_valid_ram; // Indicates, for each ID, whether the list is not empty. 
   
     for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
@@ -50,8 +50,8 @@ module simmem_linkedlist_bank #(
     end
   
     // Valid bits and pointer to next arrays. Masks update the valid bits
-    logic ram_valid_d [TotalCapacity-1:0];
-    logic ram_valid_q [TotalCapacity-1:0];
+    logic [TotalCapacity-1:0] ram_valid_d; // TODO Unpack
+    logic [TotalCapacity-1:0] ram_valid_q; // TODO Unpack
     logic ram_valid_in_mask [TotalCapacity-1:0];
     logic ram_valid_out_mask [TotalCapacity-1:0];
     logic ram_valid_apply_in_mask_id [2**IDWidth-1:0] ;
@@ -68,7 +68,7 @@ module simmem_linkedlist_bank #(
     //   end
     // end: ram_valid_apply_masks
   
-    for (genvar current_address = 0; current_address < 2**IDWidth; current_address = current_address + 1) begin
+    for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin
       assign ram_valid_d[current_address] = ram_valid_q[current_address] ^ (ram_valid_in_mask[current_address] & |ram_valid_apply_in_mask_id) ^ (ram_valid_out_mask[current_address] & |ram_valid_apply_out_mask_id);
     end
 
