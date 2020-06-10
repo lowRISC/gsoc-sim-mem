@@ -52,10 +52,10 @@ module simmem_linkedlist_bank #(
     // Valid bits and pointer to next arrays. Masks update the valid bits
     logic [TotalCapacity-1:0] ram_valid_d; // TODO Unpack
     logic [TotalCapacity-1:0] ram_valid_q; // TODO Unpack
-    logic ram_valid_in_mask [TotalCapacity-1:0];
-    logic ram_valid_out_mask [TotalCapacity-1:0];
-    logic ram_valid_apply_in_mask_id [2**IDWidth-1:0] ;
-    logic ram_valid_apply_out_mask_id [2**IDWidth-1:0] ;
+    logic [TotalCapacity-1:0] ram_valid_in_mask; // TODO Unpack 
+    logic [TotalCapacity-1:0] ram_valid_out_mask; // TODO Unpack 
+    logic [2**IDWidth-1:0] ram_valid_apply_in_mask_id; // TODO Unpack
+    logic [2**IDWidth-1:0] ram_valid_apply_out_mask_id; // TODO Unpack
   
     // This block is replaced by the assignment below
     // always_comb begin: ram_valid_apply_masks
@@ -68,9 +68,12 @@ module simmem_linkedlist_bank #(
     //   end
     // end: ram_valid_apply_masks
   
-    for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin
-      assign ram_valid_d[current_address] = ram_valid_q[current_address] ^ (ram_valid_in_mask[current_address] & |ram_valid_apply_in_mask_id) ^ (ram_valid_out_mask[current_address] & |ram_valid_apply_out_mask_id);
-    end
+    // TODO Uncomment for the unpacked way
+    assign ram_valid_d = ram_valid_q ^ (ram_valid_in_mask & {TotalCapacity{|ram_valid_apply_in_mask_id}}) ^ (ram_valid_out_mask & {TotalCapacity{|ram_valid_apply_out_mask_id}});
+
+    // for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin
+    //   assign ram_valid_d[current_address] = ram_valid_q[current_address] ^ (ram_valid_in_mask[current_address] & |ram_valid_apply_in_mask_id) ^ (ram_valid_out_mask[current_address] & |ram_valid_apply_out_mask_id);
+    // end
 
     // Merge output data
     logic is_data_o_id [2**IDWidth-1:0];
@@ -191,18 +194,24 @@ module simmem_linkedlist_bank #(
         assign next_id_to_release[current_id] = id_valid_ram[current_id] && release_en[current_id] && ~|(id_valid_ram[current_id-1:0] & release_en[current_id-1:0]);
       end
     end
-  
+
+
+    // TODO Uncomment for the unpacked way
+    
+    assign ram_valid_in_mask = '0;
+    assign ram_valid_out_mask = '0;
+
     // IdValid signals, ramValid masks
-    for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin
-      for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
-        always_comb begin
-          if (heads_q[current_id] == current_address) begin
-            ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
-          end
-        end
-      end
-      assign ram_valid_in_mask[current_address] = next_free_ram_entry_binary == current_address ? 1'b1 : 1'b0;
-    end
+    // for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin
+    //   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
+    //     always_comb begin
+    //       if (heads_q[current_id] == current_address) begin
+    //         ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
+    //       end
+    //     end
+    //   end
+    //   assign ram_valid_in_mask[current_address] = next_free_ram_entry_binary == current_address ? 1'b1 : 1'b0;
+    // end
   
       // Output is valid if a release-enabled RAM list is not empty
     assign out_valid_o = |next_id_to_release;
