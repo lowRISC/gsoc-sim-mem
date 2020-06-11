@@ -96,7 +96,7 @@ module simmem_linkedlist_bank #(
     logic next_free_ram_entry_onehot [TotalCapacity-1:0];
     logic [$clog2(TotalCapacity)-1:0] next_free_ram_entry_binary;
     logic [$clog2(TotalCapacity)-1:0] next_free_address_binary_masks [TotalCapacity-1:0];
-    logic next_free_address_binary_masks_rot90 [$clog2(TotalCapacity)-1:0][TotalCapacity-1:0];
+    logic [TotalCapacity-1:0] next_free_address_binary_masks_rot90 [$clog2(TotalCapacity)-1:0];
     
     for (genvar current_address = 0; current_address < TotalCapacity; current_address=current_address+1) begin
       assign next_free_address_binary_masks[current_address] = next_free_ram_entry_onehot[current_address] ? current_address : '0;
@@ -124,7 +124,7 @@ module simmem_linkedlist_bank #(
     
     logic [$clog2(TotalCapacity)-1:0] addr_ram [1:0];
     logic [$clog2(TotalCapacity)-1:0] addr_ram_id [1:0][2**IDWidth-1:0];
-    logic addr_ram_masks_rot90 [1:0][$clog2(TotalCapacity)-1:0][2**IDWidth-1:0];
+    logic [2**IDWidth-1:0] addr_ram_masks_rot90 [1:0][$clog2(TotalCapacity)-1:0];
   
     for (genvar ram_bank = 0; ram_bank < 2; ram_bank = ram_bank+1) begin
       // Aggregate the ram requests
