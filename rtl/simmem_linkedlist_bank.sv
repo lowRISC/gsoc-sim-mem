@@ -8,7 +8,8 @@
 module simmem_linkedlist_bank #(
   parameter int StructWidth   = 64, // Width of the message including identifier.
   parameter int TotalCapacity = 512,
-  parameter int IDWidth       = 8
+  parameter int IDWidth       = 8,
+  localparam int StructListElementWidth = StructWidth  - IDWidth
 )(
   input logic clk_i,
   input logic rst_ni,
@@ -30,19 +31,18 @@ module simmem_linkedlist_bank #(
     NEXT_ELEM_RAM  = 1'b1
   } ram_bank_t;
 
-  localparam int StructListElementWidth = StructWidth  - IDWidth;
 
   // Read the data ID
   logic [IDWidth-1:0] data_in_id_field;
   assign data_in_id_field = data_i[IDWidth-1:0];
 
   // Head, tail and non-empty signals
-  logic [$clog2(TotalCapacity)-1:0] heads_d [2**IDWidth-1:0]; // TODO Unpack
-  logic [$clog2(TotalCapacity)-1:0] heads_q [2**IDWidth-1:0]; // TODO Unpack
-  logic [$clog2(TotalCapacity)-1:0] tails_d [2**IDWidth-1:0]; // TODO Unpack
-  logic [$clog2(TotalCapacity)-1:0] tails_q [2**IDWidth-1:0]; // TODO Unpack 
-  logic [$clog2(TotalCapacity)-1:0] linkedlist_length_d [2**IDWidth-1:0]; // TODO Unpack 
-  logic [$clog2(TotalCapacity)-1:0] linkedlist_length_q [2**IDWidth-1:0]; // TODO Unpack
+  logic [$clog2(TotalCapacity)-1:0] heads_d [2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] heads_q [2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] tails_d [2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] tails_q [2**IDWidth-1:0]; 
+  logic [$clog2(TotalCapacity)-1:0] linkedlist_length_d [2**IDWidth-1:0]; 
+  logic [$clog2(TotalCapacity)-1:0] linkedlist_length_q [2**IDWidth-1:0];
   logic [2**IDWidth-1:0] id_valid_ram; // Indicates, for each ID, whether the list is not empty. Keep packed for fast XORing
 
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
@@ -50,12 +50,25 @@ module simmem_linkedlist_bank #(
   end
 
   // Valid bits and pointer to next arrays. Masks update the valid bits
-  logic [TotalCapacity-1:0] ram_valid_d; // TODO Unpack
-  logic [TotalCapacity-1:0] ram_valid_q; // TODO Unpack
-  logic [TotalCapacity-1:0] ram_valid_in_mask; // TODO Unpack 
-  logic [TotalCapacity-1:0] ram_valid_out_mask; // TODO Unpack 
-  logic [2**IDWidth-1:0] ram_valid_apply_in_mask_id; // TODO Unpack
-  logic [2**IDWidth-1:0] ram_valid_apply_out_mask_id; // TODO Unpack
+  logic ram_valid_d [TotalCapacity-1:0];
+  logic [TotalCapacity-1:0] ram_valid_q; // Pack only the Q signal
+  logic ram_valid_in_mask [TotalCapacity-1:0]; // TODO Generate statically (instead of currently dynamically) ?
+  logic ram_valid_out_mask [TotalCapacity-1:0]; 
+  logic ram_valid_apply_in_mask_id [2**IDWidth-1:0];
+  logic ram_valid_apply_out_mask_id [2**IDWidth-1:0];
+
+  logic [2**IDWidth-1:0] ram_valid_apply_in_mask_id_packed;
+  logic [2**IDWidth-1:0] ram_valid_apply_out_mask_id_packed;
+
+  for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
+    assign ram_valid_apply_in_mask_id_packed[current_id] = ram_valid_apply_in_mask_id[current_id]; // TODO Is this useless?
+    assign ram_valid_apply_out_mask_id_packed[current_id] = ram_valid_apply_out_mask_id[current_id]; // TODO Is this useless?
+  end
+
+  for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin // FIXME here
+    assign ram_valid_d[current_address] = ram_valid_q[current_address] ^ (ram_valid_in_mask[current_address] && |ram_valid_apply_in_mask_id_packed) ^ (ram_valid_out_mask[current_address] && |ram_valid_apply_out_mask_id_packed);
+  end
+
 
   // This block is replaced by the assignment below
   // always_comb begin: ram_valid_apply_masks
@@ -71,9 +84,9 @@ module simmem_linkedlist_bank #(
   // TODO Uncomment for the unpacked way
   // assign ram_valid_d = ram_valid_q ^ (ram_valid_in_mask & {TotalCapacity{|ram_valid_apply_in_mask_id}}) ^ (ram_valid_out_mask & {TotalCapacity{|ram_valid_apply_out_mask_id}});
 
-  for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin
-    assign ram_valid_d[current_address] = ram_valid_q[current_address] ^ (ram_valid_in_mask[current_address] & |ram_valid_apply_in_mask_id) ^ (ram_valid_out_mask[current_address] & |ram_valid_apply_out_mask_id);
-  end
+  // for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin // TODO Fix here
+  //   assign ram_valid_d[current_address] = ram_valid_q[current_address] ^ (ram_valid_in_mask[current_address] & |ram_valid_apply_in_mask_id) ^ (ram_valid_out_mask[current_address] & |ram_valid_apply_out_mask_id);
+  // end
 
   // Merge output data
   logic is_data_o_id [2**IDWidth-1:0];
@@ -197,14 +210,18 @@ module simmem_linkedlist_bank #(
 
 
   // IdValid signals, ramValid masks
+
+  // Idea: change ram_valid_out_mask somehow directly in sequential logic 
   for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin
-    for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
-      always_comb begin
-        if (heads_q[current_id] == current_address) begin
-          ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
-        end
-      end
-    end
+    // for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
+    //   always_comb begin
+    //     if (heads_q[current_id] == current_address) begin
+    //       assign ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
+    //     end
+    //   end
+    // end
+    assign ram_valid_out_mask[current_address] = 1'b0; // TODO Change here
+
     assign ram_valid_in_mask[current_address] = next_free_ram_entry_binary == current_address ? 1'b1 : 1'b0;
   end
 
