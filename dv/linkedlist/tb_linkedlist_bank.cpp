@@ -1,24 +1,18 @@
-// #include "Vsimmem_linked_list_bank.h"
-// #include "verilated.h"
-// int main(int argc, char **argv, char **env)
-// {
-// 	Verilated::commandArgs(argc, argv);
-
-// 	Vsimmem_linked_list_bank* top = new Vsimmem_linked_list_bank;
-// 	while (!Verilated::gotFinish())
-// 	{
-//         printf("Coucou! Je teste la linkedlist bandk\n");
-// 	}
-
-// 	delete top;
-// 	exit(0);
-// }
-
-#include <iostream>
+#include "Vsimmem_linkedlist_bank.h"
+#include "verilated.h"
 
 int main(int argc, char **argv, char **env)
 {
-	std::cout << "coucou!" << std::endl;
+	Verilated::commandArgs(argc, argv);
+
+	Vsimmem_linkedlist_bank* top = new Vsimmem_linkedlist_bank;
+	while (!Verilated::gotFinish())
+	{
+
+        printf("Alright it works!\n");
+	}
+
+	delete top;
 	exit(0);
 }
 

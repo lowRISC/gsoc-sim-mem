@@ -36,4 +36,5 @@ targets:
           - "-Wall"
     filesets:
       - files_rtl_linkedlist_bank
+      - files_tb_linkedlist_bank
     toplevel: simmem_linkedlist_bank

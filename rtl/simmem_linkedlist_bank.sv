@@ -25,12 +25,11 @@ module simmem_linkedlist_bank #(
   input logic out_ready_i,
   output logic out_valid_o
 );
-  
-  typedef enum logic { 
-    STRUCT_RAM      = 1'b0,
+
+  typedef enum logic { // Check if 1 RAM
+    STRUCT_RAM     = 1'b0,
     NEXT_ELEM_RAM  = 1'b1
   } ram_bank_t;
-
 
   // Read the data ID
   logic [IDWidth-1:0] data_in_id_field;
