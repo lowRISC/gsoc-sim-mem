@@ -2,32 +2,31 @@ CAPI=2:
 # Copyright lowRISC contributors.
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
-name: "::simmem:0.1"
-description: "Simulated memory controller"
-
+# name: "lowrisc:dv_verilator:prim_sync_reqack_tb"
+description: "REQ/ACK Synchronizer Verilator TB"
 filesets:
   files_rtl:
     depend:
-      - lowrisc:prim:ram_1p
+      - lowrisc:prim:all
     files:
-      - rtl/simmem_linkedlist_bank.sv
+      - rtl/prim_sync_reqack_tb.sv
     file_type: systemVerilogSource
 
-  files_dv_linkedlist_bank:
+  files_dv_verilator:
     depend:
       - lowrisc:dv_verilator:simutil_verilator
+
     files:
-      - dv/simmem_linkedlist_bank/cpp/simmem_linkedlist_bank_tb.cc: {file_type: cppSource}
-      - dv/simmem_linkedlist_bank/rtl/simmem_linkedlist_bank_tb.sv: {file_type: systemVerilogSource}
+      - cpp/prim_sync_reqack_tb.cc
+    file_type: cppSource
 
 targets:
-
-  sim_linkedlist_bank:
+  default:
     default_tool: verilator
     filesets:
       - files_rtl
-      - files_dv_linkedlist_bank
-    toplevel: simmem_linkedlist_bank_tb
+      - files_dv_verilator
+    toplevel: prim_sync_reqack_tb
     tools:
       verilator:
         mode: cc
@@ -44,8 +43,8 @@ targets:
 # -O
 #   Optimization levels have a large impact on the runtime performance of the
 #   simulation model. -O2 and -O3 are pretty similar, -Os is slower than -O2/-O3
-          - '-CFLAGS "-std=c++11 -Wall -DVM_TRACE_FMT_FST -DTOPLEVEL_NAME=simmem_linkedlist_bank_tb -g -O0"'
-          - '-LDFLAGS "-pthread -lutil"'
+          - '-CFLAGS "-std=c++11 -Wall -DVM_TRACE_FMT_FST -DTOPLEVEL_NAME=prim_sync_reqack_tb -g -O0"'
+          - '-LDFLAGS "-pthread -lutil -lelf"'
           - "-Wall"
           - "-Wno-PINCONNECTEMPTY"
           # XXX: Cleanup all warnings and remove this option

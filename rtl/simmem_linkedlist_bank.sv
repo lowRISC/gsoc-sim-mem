@@ -7,14 +7,14 @@
 
 module simmem_linkedlist_bank #(
   parameter int StructWidth   = 64, // Width of the message including identifier.
-  parameter int TotalCapacity = 512,
-  parameter int IDWidth       = 8,
+  parameter int TotalCapacity = 128,
+  parameter int IDWidth       = 4,
   localparam int StructListElementWidth = StructWidth  - IDWidth
 )(
   input logic clk_i,
   input logic rst_ni,
 
-  input logic [2**IDWidth-1:0] release_en, // Input from the releaser
+  input logic [2**IDWidth-1:0] release_en_i, // Input from the releaser
 
   input logic [StructWidth-1:0] data_i, // The identifier should be the first IDWidth bits
   output logic [StructWidth-1:0] data_o,
@@ -26,7 +26,7 @@ module simmem_linkedlist_bank #(
   output logic out_valid_o
 );
 
-  typedef enum logic { // Check if 1 RAM
+  typedef enum logic {
     STRUCT_RAM     = 1'b0,
     NEXT_ELEM_RAM  = 1'b1
   } ram_bank_t;
@@ -68,7 +68,6 @@ module simmem_linkedlist_bank #(
     assign ram_valid_d[current_address] = ram_valid_q[current_address] ^ (ram_valid_in_mask[current_address] && |ram_valid_apply_in_mask_id_packed) ^ (ram_valid_out_mask[current_address] && |ram_valid_apply_out_mask_id_packed);
   end
 
-
   // This block is replaced by the assignment below
   // always_comb begin: ram_valid_apply_masks
   //   ram_valid_d = ram_valid_q;
@@ -105,7 +104,7 @@ module simmem_linkedlist_bank #(
   assign data_o[StructWidth-1:IDWidth] = data_out_struct_ram;
 
   // Find the next free address and transform next free address from one-hot to binary encoding
-  logic next_free_ram_entry_onehot [TotalCapacity-1:0];
+  logic next_free_ram_entry_onehot [TotalCapacity-1:0]; // Can be full zero if there is no free space in RAM
   logic [$clog2(TotalCapacity)-1:0] next_free_ram_entry_binary;
   logic [$clog2(TotalCapacity)-1:0] next_free_address_binary_masks [TotalCapacity-1:0];
   logic [TotalCapacity-1:0] next_free_address_binary_masks_rot90 [$clog2(TotalCapacity)-1:0];
@@ -163,7 +162,7 @@ module simmem_linkedlist_bank #(
 
   prim_ram_1p #(
     .Width(StructListElementWidth),
-    .DataBitsPerMask(8), // TODO Configure correctly the masks, or use a non-masked RAM
+    .DataBitsPerMask(1), // TODO Configure correctly the masks, or use a non-masked RAM
     .Depth(TotalCapacity)
   ) struct_ram_i (
     .clk_i     (clk_i),
@@ -177,7 +176,7 @@ module simmem_linkedlist_bank #(
 
   prim_ram_1p #(
     .Width($clog2(TotalCapacity)),
-    .DataBitsPerMask(8),
+    .DataBitsPerMask(1),
     .Depth(TotalCapacity)
   ) next_elem_ram_i (
     .clk_i     (clk_i),
@@ -189,21 +188,47 @@ module simmem_linkedlist_bank #(
     .rdata_o   (data_out_next_elem_ram)
   );
 
+  // // Next free addresses
+  // assign next_free_ram_entry_onehot[0] = !|ram_valid_q;
+  // assign next_free_ram_entry_onehot[1] = !ram_valid_q[0] && !(next_free_ram_entry_onehot[0]);
+  // for (genvar current_address = 2; current_address < TotalCapacity; current_address = current_address + 1) begin
+  //   assign next_free_ram_entry_onehot[current_address] = !(ram_valid_q[current_address-1]) && !(|(next_free_ram_entry_onehot[current_address-1:0]));
+  // end
+
   // Next free addresses
-  for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin
-    if (current_address == 0) begin
-      assign next_free_ram_entry_onehot[current_address] = ram_valid_q[current_address];
-    end else begin
-      assign next_free_ram_entry_onehot[current_address] = ram_valid_q[current_address] && ~&ram_valid_q[current_address-1:0];
-    end
+  // logic next_free_ram_entry_onehot_or_reduction [TotalCapacity-2:0];
+  // for (genvar current_address = 1; current_address < TotalCapacity; current_address = current_address + 1) begin
+  //   always_comb begin // TODO Remove the always comb, but this gives combinatorial loop.
+  //     for (int i = 0; i <= current_address; i++) begin
+  //       next_free_ram_entry_onehot_or_reduction[current_address-1] = next_free_ram_entry_onehot_or_reduction[current_address-1] || 
+  //     end 
+  //   end
+  // end
+
+  assign next_free_ram_entry_onehot[0] = !ram_valid_q[0];
+  for (genvar current_address = 1; current_address < TotalCapacity; current_address = current_address + 1) begin
+    assign next_free_ram_entry_onehot[current_address] = !ram_valid_q[current_address] && &ram_valid_q[current_address-1:0];
   end
+
+    // Next free addresses
+  // logic next_free_ram_entry_onehot_still_not_one [TotalCapacity-2:0];
+  
+  // assign next_free_ram_entry_onehot[0] = !|ram_valid_q;
+  // assign next_free_ram_entry_onehot_still_not_one[0] = !(next_free_ram_entry_onehot[0]);
+
+  // assign next_free_ram_entry_onehot[1] = !ram_valid_q[0] && next_free_ram_entry_onehot_still_not_one[0];
+
+  // for (genvar current_address = 2; current_address < TotalCapacity; current_address = current_address + 1) begin
+  //   assign next_free_ram_entry_onehot_still_not_one[current_address-1] = next_free_ram_entry_onehot[current_address-1] && next_free_ram_entry_onehot_still_not_one[current_address-2];
+  //   assign next_free_ram_entry_onehot[current_address] = !(ram_valid_q[current_address-1]) && next_free_ram_entry_onehot_still_not_one[current_address-1];
+  // end
 
   // Next Id to release from RAM
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
     if (current_id == 0) begin
-      assign next_id_to_release[current_id] = id_valid_ram[current_id] && release_en[current_id];
+      assign next_id_to_release[current_id] = id_valid_ram[current_id] && release_en_i[current_id];
     end else begin
-      assign next_id_to_release[current_id] = id_valid_ram[current_id] && release_en[current_id] && ~|(id_valid_ram[current_id-1:0] & release_en[current_id-1:0]);
+      assign next_id_to_release[current_id] = id_valid_ram[current_id] && release_en_i[current_id] && ~|(id_valid_ram[current_id-1:0] & release_en_i[current_id-1:0]);
     end
   end
 
@@ -212,23 +237,22 @@ module simmem_linkedlist_bank #(
 
   // Idea: change ram_valid_out_mask somehow directly in sequential logic 
   for (genvar current_address = 0; current_address < TotalCapacity; current_address = current_address + 1) begin
-    // for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
-    //   always_comb begin
-    //     if (heads_q[current_id] == current_address) begin
-    //       assign ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
-    //     end
-    //   end
-    // end
-    assign ram_valid_out_mask[current_address] = 1'b0; // TODO Change here
+    for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
+      always_comb begin
+        if (heads_q[current_id] == current_address) begin
+          assign ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
+        end
+      end
+    end
 
     assign ram_valid_in_mask[current_address] = next_free_ram_entry_binary == current_address ? 1'b1 : 1'b0;
   end
 
-    // Output is valid if a release-enabled RAM list is not empty
+  // Output is valid if a release-enabled RAM list is not empty
   assign out_valid_o = |next_id_to_release;
 
-    // Input is ready if there is room and data is not flowing out
-  assign in_ready_o = |ram_valid_q && !(out_valid_o && out_ready_i);
+  // Input is ready if there is room and data is not flowing out
+  assign in_ready_o = |(~ram_valid_q) && !(out_valid_o && out_ready_i);
 
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
 
@@ -305,8 +329,8 @@ module simmem_linkedlist_bank #(
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (~rst_ni) begin
-        heads_q[current_id] <= current_id[$clog2(TotalCapacity)-1:0];
-        tails_q[current_id] <= current_id[$clog2(TotalCapacity)-1:0];
+        heads_q[current_id] <= '0; //current_id[$clog2(TotalCapacity)-1:0];
+        tails_q[current_id] <= '0; //current_id[$clog2(TotalCapacity)-1:0];
         linkedlist_length_q[current_id] <= '0;
       end else begin
         heads_q[current_id] <= heads_d[current_id];

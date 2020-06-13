@@ -1,18 +1,16 @@
-#include "Vsimmem_linkedlist_bank.h"
+#include "VSimmem.h"
 #include "verilated.h"
-
 int main(int argc, char **argv, char **env)
 {
 	Verilated::commandArgs(argc, argv);
 
-	Vsimmem_linkedlist_bank* top = new Vsimmem_linkedlist_bank;
+	VSimmem* top = new VSimmem;
 	while (!Verilated::gotFinish())
 	{
 
-        printf("Alright it works!\n");
+        printf("Coucou!");
 	}
 
 	delete top;
 	exit(0);
 }
-
