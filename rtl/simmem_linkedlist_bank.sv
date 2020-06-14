@@ -45,7 +45,7 @@ module simmem_linkedlist_bank #(
   logic [2**IDWidth-1:0] id_valid_ram; // Indicates, for each ID, whether the list is not empty. Keep packed for fast XORing
 
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
-    assign id_valid_ram[current_id] = linkedlist_length_q[current_id] == '0;
+    assign id_valid_ram[current_id] = linkedlist_length_q[current_id] != '0;
   end
 
   // Valid bits and pointer to next arrays. Masks update the valid bits
@@ -122,7 +122,7 @@ module simmem_linkedlist_bank #(
   end
 
   // Find the next id to release (one-hot)
-  logic [2**IDWidth-1:0] next_id_to_release;
+  logic [2**IDWidth-1:0] next_id_to_release_onehot;
 
   // RAM instances and management signals
   logic req_ram [1:0];
@@ -226,9 +226,9 @@ module simmem_linkedlist_bank #(
   // Next Id to release from RAM
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
     if (current_id == 0) begin
-      assign next_id_to_release[current_id] = id_valid_ram[current_id] && release_en_i[current_id];
+      assign next_id_to_release_onehot[current_id] = id_valid_ram[current_id] && release_en_i[current_id];
     end else begin
-      assign next_id_to_release[current_id] = id_valid_ram[current_id] && release_en_i[current_id] && ~|(id_valid_ram[current_id-1:0] & release_en_i[current_id-1:0]);
+      assign next_id_to_release_onehot[current_id] = id_valid_ram[current_id] && release_en_i[current_id] && ~|(id_valid_ram[current_id-1:0] & release_en_i[current_id-1:0]);
     end
   end
 
@@ -240,7 +240,7 @@ module simmem_linkedlist_bank #(
     for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
       always_comb begin
         if (heads_q[current_id] == current_address) begin
-          assign ram_valid_out_mask[current_address] = current_id == next_id_to_release ? 1'b1 : 1'b0;
+          assign ram_valid_out_mask[current_address] = current_id == next_id_to_release_onehot ? 1'b1 : 1'b0;
         end
       end
     end
@@ -249,7 +249,7 @@ module simmem_linkedlist_bank #(
   end
 
   // Output is valid if a release-enabled RAM list is not empty
-  assign out_valid_o = |next_id_to_release;
+  assign out_valid_o = |next_id_to_release_onehot;
 
   // Input is ready if there is room and data is not flowing out
   assign in_ready_o = |(~ram_valid_q) && !(out_valid_o && out_ready_i);
@@ -263,6 +263,7 @@ module simmem_linkedlist_bank #(
       ram_valid_apply_in_mask_id[current_id] = 1'b0;
       ram_valid_apply_out_mask_id[current_id] = 1'b0;
       is_data_o_id[current_id] = 1'b0;
+      linkedlist_length_d[current_id] = linkedlist_length_q[current_id];
 
       // Default RAM signals
       for (int ram_bank = 0; ram_bank < 2; ram_bank = ram_bank + 1) begin
@@ -271,7 +272,7 @@ module simmem_linkedlist_bank #(
       end
 
       // Handshakes: start by output to avoid blocking output with simultaneous inputs
-      if (out_ready_i && out_valid_o && next_id_to_release == current_id) begin
+      if (out_ready_i && out_valid_o && next_id_to_release_onehot[current_id]) begin
         req_ram_id[STRUCT_RAM][current_id] = 1'b1;
         write_ram_id[STRUCT_RAM][current_id] = 1'b0;
         addr_ram_id[STRUCT_RAM][current_id] = heads_q[current_id];
@@ -286,7 +287,7 @@ module simmem_linkedlist_bank #(
 
         // Update the head position in the RAM
         req_ram_id[NEXT_ELEM_RAM][current_id] = 1'b1;
-        write_ram_id[NEXT_ELEM_RAM][current_id] = 1'b1;
+        write_ram_id[NEXT_ELEM_RAM][current_id] = 1'b0;
         addr_ram_id[NEXT_ELEM_RAM][current_id] = heads_q[current_id];
         heads_d[current_id] = data_out_next_elem_ram;
 
@@ -295,16 +296,16 @@ module simmem_linkedlist_bank #(
         // Mark address as taken
         ram_valid_apply_in_mask_id[current_id] = 1'b1;
 
+        linkedlist_length_d[current_id] = linkedlist_length_q[current_id] + 1;
+
         // Take the input data, considering cases where the RAM list is empty or not
         if (id_valid_ram[current_id]) begin
           tails_d[current_id] = next_free_ram_entry_binary;
 
-          linkedlist_length_d[current_id] = linkedlist_length_q[current_id] + 1;
-
           // Store into next elem RAM
           req_ram_id[NEXT_ELEM_RAM][current_id] = 1'b1;
           write_ram_id[NEXT_ELEM_RAM][current_id] = 1'b1;
-          addr_ram_id[NEXT_ELEM_RAM][current_id] = tails_d[current_id];
+          addr_ram_id[NEXT_ELEM_RAM][current_id] = tails_q[current_id];
 
           // Store into struct RAM
           req_ram_id[STRUCT_RAM][current_id] = 1'b1;

@@ -16,15 +16,15 @@ module simmem_linkedlist_bank_tb #(
 
   localparam int StructWidth   = 32; // Width of the message including identifier.
   localparam int TotalCapacity = 16;
-  localparam int IDWidth       = 4;
+  localparam int IDWidth       = 2;
 
   logic [2**IDWidth-1:0] release_en;
   logic [StructWidth-1:0] in_data; // The identifier should be the first IDWidth bits
-  // logic [StructWidth-1:0] out_data;
+  logic [StructWidth-1:0] out_data;
   logic in_valid;
   logic in_ready;
-  // logic out_ready;
-  // logic out_valid;
+  logic out_ready;
+  logic out_valid;
 
 
   // Instantiate DUT
@@ -37,18 +37,15 @@ module simmem_linkedlist_bank_tb #(
     .rst_ni(rst_ni),
     .release_en_i(release_en),
     .data_i(in_data),
-    .data_o(),
+    .data_o(out_data),
     .in_valid_i(in_valid),
     .in_ready_o(in_ready),
-    .out_ready_i(),
-    .out_valid_o()
+    .out_ready_i(out_ready),
+    .out_valid_o(out_valid)
   );
 
   // Introduce one single element
-  assign release_en = '0;
-  assign in_valid = '1;
-  // assign out_ready = '0;
-
+  assign release_en = {2**IDWidth{1'b1}};
 
   // Example of stimuli application
     // For now we just use a counter
@@ -75,9 +72,14 @@ module simmem_linkedlist_bank_tb #(
     end
   end: in_valid_p
 
+  always_comb begin: out_ready_p
+    out_ready = 0;
+    if (rst_ni) begin
+      out_ready = count_stimuli_q >= 10 ? 1'b1 : '0;
+    end
+  end: out_ready_p
+
   assign in_data = count_stimuli_q;
-
-
 
   // Cycle counter
   always_ff @(posedge clk_i or negedge rst_ni) begin
