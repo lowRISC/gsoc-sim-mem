@@ -75,8 +75,7 @@ module simmem_linkedlist_bank_tb #(
   always_comb begin: out_ready_p
     out_ready = 0;
     if (rst_ni) begin
-      out_ready = count_clock_q >= 2 ? 1'b1 : '0;
-      // out_ready = count_stimuli_q >= NbInputsToSend ? 1'b1 : '0;
+      out_ready = count_stimuli_q >= NbInputsToSend ? 1'b1 : '0;
     end
   end: out_ready_p
 

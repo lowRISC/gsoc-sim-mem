@@ -121,19 +121,18 @@ module simmem_linkedlist_bank #(
   // logic is_data_o_id [2**IDWidth-1:0]; // TODO Check if could be just substituted by next_id_to_release_onehot
   logic [StructWidth-1:0] data_o_id      [2**IDWidth-1:0];
   logic [StructWidth-1:0] data_o_id_mask [2**IDWidth-1:0];
-  logic [2**IDWidth-1:0] data_o_id_mask_rot90 [IDWidth-1:0];
+  logic [2**IDWidth-1:0] data_o_id_mask_rot90 [StructWidth-1:0];
   for (genvar current_id = 0; current_id < 2**IDWidth; current_id = current_id + 1) begin
-    assign data_o_id_mask[current_id] = data_o_id[current_id] & {StructWidth{next_id_to_release_onehot[current_id]}};
+    assign data_o_id_mask[current_id] = data_o_id[current_id] & {StructWidth{next_id_to_release_onehot[current_id]}}; // TOOD The and operation should be removed
   end
-  for (genvar i = 0; i < 2**IDWidth; i = i + 1) begin
-    for (genvar j = 0; j < IDWidth; j = j + 1) begin
-      assign data_o_id_mask_rot90[j][i] = data_o_id_mask[i][j];
+  for (genvar current_id = 0; current_id < 2**IDWidth; current_id = current_id + 1) begin
+    for (genvar current_struct_bit = 0; current_struct_bit < StructWidth; current_struct_bit = current_struct_bit + 1) begin
+      assign data_o_id_mask_rot90[current_struct_bit][current_id] = data_o_id_mask[current_id][current_struct_bit];
     end
   end
-  for (genvar current_id_bit = 0; current_id_bit < IDWidth; current_id_bit = current_id_bit + 1) begin
-    assign data_o[current_id_bit] = |data_o_id_mask_rot90[current_id_bit]; // TODO Make sure the bit ordering is good
+  for (genvar current_struct_bit = 0; current_struct_bit < StructWidth; current_struct_bit = current_struct_bit + 1) begin
+    assign data_o[current_struct_bit] = |data_o_id_mask_rot90[current_struct_bit]; // TODO Make sure the bit ordering is good
   end
-  assign data_o[StructWidth-1:IDWidth] = data_out_struct_ram;
 
   // Find the next free address and transform next free address from one-hot to binary encoding
   logic next_free_ram_entry_onehot [TotalCapacity-1:0]; // Can be full zero if there is no free space in RAM
@@ -272,12 +271,18 @@ module simmem_linkedlist_bank #(
   //   assign next_free_ram_entry_onehot[current_address] = !(ram_valid_q[current_address-1]) && next_free_ram_entry_onehot_still_not_one[current_address-1];
   // end
 
+  logic [2**IDWidth-2:0] next_id_to_release_onehot_exclude;
+
+  for (genvar current_id = 0; current_id < 2 ** IDWidth-1; current_id = current_id + 1) begin
+    assign next_id_to_release_onehot_exclude[current_id] = current_id == data_in_id_field;
+  end
+
   // Next Id to release from RAM
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
     if (current_id == 0) begin
       assign next_id_to_release_onehot[current_id] = (out_buf_id_valid_q[current_id] || in_valid_i && in_ready_o && current_id == data_in_id_field) && release_en_i[current_id];
     end else begin
-      assign next_id_to_release_onehot[current_id] = (out_buf_id_valid_q[current_id] || in_valid_i && in_ready_o && current_id == data_in_id_field) && release_en_i[current_id] && ~|(out_buf_id_valid_q[current_id-1:0] & release_en_i[current_id-1:0]);
+      assign next_id_to_release_onehot[current_id] = (out_buf_id_valid_q[current_id] || in_valid_i && in_ready_o && current_id == data_in_id_field) && release_en_i[current_id] && !|((out_buf_id_valid_q[current_id-1:0] | ({current_id{in_valid_i && in_ready_o}} & next_id_to_release_onehot_exclude[current_id-1:0])) & release_en_i[current_id-1:0]);
     end
   end
 
@@ -324,7 +329,7 @@ module simmem_linkedlist_bank #(
         for (int ram_port = 0; ram_port < 2; ram_port = ram_port + 1) begin
           req_ram_id[ram_bank][ram_port][current_id] = 1'b0;
           write_ram_id[ram_bank][ram_port][current_id] = 1'b0;
-          addr_ram_id[ram_bank][ram_port][current_id] = 1'b0;
+          addr_ram_id[ram_bank][ram_port][current_id] = '0;
         end
       end
       
