@@ -8,7 +8,7 @@ description: "Simulated memory controller"
 filesets:
   files_rtl:
     depend:
-      - lowrisc:prim:ram_1p
+      - lowrisc:prim_generic:ram_2p
     files:
       - rtl/simmem_linkedlist_bank.sv
     file_type: systemVerilogSource
