@@ -2,8 +2,9 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 //
+// Linkedlist bank for delays in the simulated memory controller
 
-module simmem_linkedlist_bank #(
+module simmem_linkedlist_delay_bank #(
     parameter int CounterWidth = 64,  // Width of the message including identifier
     parameter int TotalCapacity = 128,
     parameter int IDWidth = 4
@@ -17,21 +18,13 @@ module simmem_linkedlist_bank #(
     output logic [CounterWidth-1:0] data_o,
 
     input  logic in_valid_i,
-    output logic in_ready_o,
 
     input  logic out_ready_i,
     output logic out_valid_o
 );
 
-  typedef enum logic {
-    STRUCT_RAM = 1'b0,
-    NEXT_ELEM_RAM = 1'b1
-  } ram_bank_e;
-
-  typedef enum logic {
-    RAM_IN = 1'b0,
-    RAM_OUT = 1'b1
-  } ram_port_e;
+  import simmem_pkg::ram_bank_e;
+  import simmem_pkg::ram_port_e;
 
   // Head, tail and non-empty signals
   logic [$clog2(TotalCapacity)-1:0] heads_d[2**IDWidth-1:0];
@@ -204,11 +197,9 @@ module simmem_linkedlist_bank #(
     end
   end
 
-  logic [CounterWidth-1:0] data_in_noid;
   logic [CounterWidth-1:0] data_out_struct_ram;
   logic [$clog2(TotalCapacity)-1:0] data_out_next_elem_ram;
 
-  assign data_in_noid = data_i[CounterWidth - 1:IDWidth];
   assign wmask_struct_ram = {CounterWidth - IDWidth{1'b1}};
   assign wmask_next_elem_ram = {$clog2(TotalCapacity) {1'b1}};
 
@@ -224,7 +215,7 @@ module simmem_linkedlist_bank #(
     .a_write_i   (write_ram[STRUCT_RAM][RAM_IN]),
     .a_wmask_i   (wmask_struct_ram),
     .a_addr_i    (addr_ram[STRUCT_RAM][RAM_IN]),
-    .a_wdata_i   (data_in_noid),
+    .a_wdata_i   (data_i),
     .a_rdata_o   (),
     
     .b_req_i     (req_ram[STRUCT_RAM][RAM_OUT]),
@@ -271,7 +262,7 @@ module simmem_linkedlist_bank #(
   logic [2**IDWidth-2:0] next_id_to_release_onehot_exclude;
 
   for (genvar current_id = 0; current_id < 2 ** IDWidth - 1; current_id = current_id + 1) begin
-    assign next_id_to_release_onehot_exclude[current_id] = current_id == data_in_id_field;
+    assign next_id_to_release_onehot_exclude[current_id] = current_id == data_id_i;
   end
 
   // Next Id to release from RAM
@@ -279,13 +270,13 @@ module simmem_linkedlist_bank #(
     if (current_id == 0) begin
       assign next_id_to_release_onehot[current_id] =
           (out_buf_id_valid_q[current_id] ||
-           in_valid_i && in_ready_o && current_id == data_in_id_field);
+           in_valid_i && current_id == data_id_i);
     end else begin
       assign next_id_to_release_onehot[current_id] =
-          (out_buf_id_valid_q[current_id] || in_valid_i && in_ready_o && current_id ==
-          data_in_id_field) &&
+          (out_buf_id_valid_q[current_id] || in_valid_i && current_id ==
+          data_id_i) &&
           !|(out_buf_id_valid_q_packed[current_id-1:0] |
-          ({current_id{in_valid_i && in_ready_o}} &
+          ({current_id{in_valid_i}} &
           next_id_to_release_onehot_exclude[current_id-1:0]));
     end
   end
@@ -309,9 +300,6 @@ module simmem_linkedlist_bank #(
 
   // Output is valid if a release-enabled RAM list is not empty
   assign out_valid_o = |next_id_to_release_onehot_packed;
-
-  // Input is ready if there is room and data is not flowing out
-  assign in_ready_o = |(~ram_valid_q_packed) || |(~out_buf_id_valid_q_packed);
 
   for (
       genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1
@@ -343,8 +331,7 @@ module simmem_linkedlist_bank #(
       if (out_ready_i && out_valid_o && next_id_to_release_onehot[current_id]) begin : out_handshake
 
         if (out_buf_id_valid_q[current_id]) begin : out_handshake_out_buf_valid
-          data_o_id[current_id] = {out_buf_id_actual_content[current_id],
-                                   current_id[IDWidth - 1:0]};
+          data_o_id[current_id] = {out_buf_id_actual_content[current_id]};
 
           // If the RAM is not empty
           if (id_valid_ram[current_id]) begin : out_handshake_ram_valid
@@ -365,21 +352,21 @@ module simmem_linkedlist_bank #(
             write_ram_id[NEXT_ELEM_RAM][RAM_OUT][current_id] = 1'b0;
             addr_ram_id[NEXT_ELEM_RAM][RAM_OUT][current_id] = heads_actual[current_id];
 
-          end else if (in_valid_i && in_ready_o && current_id == data_in_id_field
+          end else if (in_valid_i && current_id == data_id_i
               ) begin : out_handshake_refill_buf_from_input
             out_buf_id_d[current_id] = data_in_noid;
           end else begin : out_handshake_id_now_empty
             out_buf_id_valid_d[current_id] = 1'b0;
           end
         end else begin : out_handshake_direct_flow
-          // The property (in_valid_i && in_ready_o && current_id == data_in_id_field)
+          // The property (in_valid_i && current_id == data_id_i)
           // is granted by next_id_to_release_onehot[current_id] 
-          data_o_id[current_id] = {data_in_noid, current_id[IDWidth - 1:0]};
+          data_o_id[current_id] = data_in_noid;
         end
 
       end
 
-      if (in_valid_i && in_ready_o && current_id == data_in_id_field) begin : in_handshake
+      if (in_valid_i && current_id == data_id_i) begin : in_handshake
 
         if (!out_buf_id_valid_q[current_id]) begin : in_handshake_buf_empty
           // Direct flow from input to output is already implemented in the output handshake block 
@@ -460,5 +447,7 @@ module simmem_linkedlist_bank #(
       end
     end
   end
+
+  assert (|(~ram_valid_q_packed) || |(~out_buf_id_valid_q_packed)) else $error("Delay bank is full.");
 
 endmodule

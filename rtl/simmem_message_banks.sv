@@ -40,11 +40,11 @@ module simmem_message_banks #(
 
   import simmem_pkg::ram_bank_e;
 
-  simmem_message_bank #(
+  simmem_linkedlist_message_bank #(
     .StructWidth(ReadDataStructWidth),
     .TotalCapacity(ReadDataBanksCapacity),
     .IDWidth(IDWidth)
-  ) simmem_message_bank_read_data_i (
+  ) simmem_linkedlist_message_bank_read_data_i (
     .clk_i,
     .rst_ni,
 
@@ -60,7 +60,7 @@ module simmem_message_banks #(
     .out_valid_o(read_data_out_valid_o)
   );
 
-  simmem_message_bank #(
+  simmem_linkedlist_message_bank #(
     .StructWidth(ReadDataStructWidth),
     .TotalCapacity(ReadDataBanksCapacity),
     .IDWidth(IDWidth)

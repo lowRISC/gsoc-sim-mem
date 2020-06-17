@@ -2,8 +2,9 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 //
+// Linkedlist bank for messages in the simulated memory controller 
 
-module simmem_linkedlist_bank #(
+module simmem_linkedlist_message_bank #(
     parameter int StructWidth = 64,  // Width of the message including identifier
     parameter int TotalCapacity = 128,
     parameter int IDWidth = 4
