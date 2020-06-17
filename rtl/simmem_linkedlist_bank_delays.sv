@@ -4,19 +4,17 @@
 //
 
 module simmem_linkedlist_bank #(
-    parameter int StructWidth = 64,  // Width of the message including identifier
+    parameter int CounterWidth = 64,  // Width of the message including identifier
     parameter int TotalCapacity = 128,
     parameter int IDWidth = 4
 ) (
     input logic clk_i,
     input logic rst_ni,
 
-    // Input from the releaser
-    input logic [2**IDWidth-1:0] release_en_i,
+    input logic [IDWidth-1:0] data_id_i,
 
-    // The identifier must be the first IDWidth bits
-    input  logic [StructWidth-1:0] data_i,
-    output logic [StructWidth-1:0] data_o,
+    input  logic [CounterWidth-1:0] data_i,
+    output logic [CounterWidth-1:0] data_o,
 
     input  logic in_valid_i,
     output logic in_ready_o,
@@ -25,12 +23,15 @@ module simmem_linkedlist_bank #(
     output logic out_valid_o
 );
 
-  import simmem_pkg::ram_bank_e;
-  import simmem_pkg::ram_port_e;
+  typedef enum logic {
+    STRUCT_RAM = 1'b0,
+    NEXT_ELEM_RAM = 1'b1
+  } ram_bank_e;
 
-  // Read the data ID
-  logic [IDWidth-1:0] data_in_id_field;
-  assign data_in_id_field = data_i[IDWidth - 1:0];
+  typedef enum logic {
+    RAM_IN = 1'b0,
+    RAM_OUT = 1'b1
+  } ram_port_e;
 
   // Head, tail and non-empty signals
   logic [$clog2(TotalCapacity)-1:0] heads_d[2**IDWidth-1:0];
@@ -55,10 +56,10 @@ module simmem_linkedlist_bank #(
   end
 
   // Output buffers, contain the next data to output
-  logic [StructWidth-IDWidth-1:0]
+  logic [CounterWidth-1:0]
       out_buf_id_d[2**IDWidth-1:0];  // Needs packing, since stores whole messages delivered at once
-  logic [StructWidth-IDWidth-1:0] out_buf_id_q[2**IDWidth-1:0];
-  logic [StructWidth-IDWidth-1:0] out_buf_id_actual_content[2**IDWidth-1:0];
+  logic [CounterWidth-1:0] out_buf_id_q[2**IDWidth-1:0];
+  logic [CounterWidth-1:0] out_buf_id_actual_content[2**IDWidth-1:0];
   logic out_buf_id_valid_d[2**IDWidth-1:0];
   logic out_buf_id_valid_q[2**IDWidth-1:0];
   logic [2**IDWidth-1:0] out_buf_id_valid_q_packed;
@@ -105,17 +106,17 @@ module simmem_linkedlist_bank #(
   end
 
   // Merge output data from all the identifiers
-  logic [StructWidth-1:0] data_o_id[2**IDWidth-1:0];
-  logic [StructWidth-1:0] data_o_id_mask[2**IDWidth-1:0];
-  logic [2**IDWidth-1:0] data_o_id_mask_rot90[StructWidth-1:0];
+  logic [CounterWidth-1:0] data_o_id[2**IDWidth-1:0];
+  logic [CounterWidth-1:0] data_o_id_mask[2**IDWidth-1:0];
+  logic [2**IDWidth-1:0] data_o_id_mask_rot90[CounterWidth-1:0];
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
     assign data_o_id_mask[current_id] =
-        data_o_id[current_id] & {StructWidth{next_id_to_release_onehot[current_id]}};
+        data_o_id[current_id] & {CounterWidth{next_id_to_release_onehot[current_id]}};
   end
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
     for (
         genvar current_struct_bit = 0;
-        current_struct_bit < StructWidth;
+        current_struct_bit < CounterWidth;
         current_struct_bit = current_struct_bit + 1
     ) begin
       assign data_o_id_mask_rot90[current_struct_bit][current_id] =
@@ -124,7 +125,7 @@ module simmem_linkedlist_bank #(
   end
   for (
       genvar current_struct_bit = 0;
-      current_struct_bit < StructWidth;
+      current_struct_bit < CounterWidth;
       current_struct_bit = current_struct_bit + 1
   ) begin
     assign data_o[current_struct_bit] = |data_o_id_mask_rot90[current_struct_bit];
@@ -166,7 +167,7 @@ module simmem_linkedlist_bank #(
   logic [2**IDWidth-1:0] req_ram_id_packed[1:0][1:0];
   logic [2**IDWidth-1:0] write_ram_id[1:0][1:0];
 
-  logic [StructWidth-IDWidth-1:0] wmask_struct_ram;
+  logic [CounterWidth-1:0] wmask_struct_ram;
   logic [$clog2(TotalCapacity)-1:0] wmask_next_elem_ram;
 
   logic [$clog2(TotalCapacity)-1:0] addr_ram[1:0][1:0];
@@ -203,16 +204,16 @@ module simmem_linkedlist_bank #(
     end
   end
 
-  logic [StructWidth-IDWidth-1:0] data_in_noid;
-  logic [StructWidth-IDWidth-1:0] data_out_struct_ram;
+  logic [CounterWidth-1:0] data_in_noid;
+  logic [CounterWidth-1:0] data_out_struct_ram;
   logic [$clog2(TotalCapacity)-1:0] data_out_next_elem_ram;
 
-  assign data_in_noid = data_i[StructWidth - 1:IDWidth];
-  assign wmask_struct_ram = {StructWidth - IDWidth{1'b1}};
+  assign data_in_noid = data_i[CounterWidth - 1:IDWidth];
+  assign wmask_struct_ram = {CounterWidth - IDWidth{1'b1}};
   assign wmask_next_elem_ram = {$clog2(TotalCapacity) {1'b1}};
 
   prim_generic_ram_2p #(
-    .Width(StructWidth-IDWidth),
+    .Width(CounterWidth),
     .DataBitsPerMask(1),
     .Depth(TotalCapacity)
   ) struct_ram_i (
@@ -278,14 +279,14 @@ module simmem_linkedlist_bank #(
     if (current_id == 0) begin
       assign next_id_to_release_onehot[current_id] =
           (out_buf_id_valid_q[current_id] ||
-           in_valid_i && in_ready_o && current_id == data_in_id_field) && release_en_i[current_id];
+           in_valid_i && in_ready_o && current_id == data_in_id_field);
     end else begin
       assign next_id_to_release_onehot[current_id] =
           (out_buf_id_valid_q[current_id] || in_valid_i && in_ready_o && current_id ==
-          data_in_id_field) && release_en_i[current_id] &&
-          !|((out_buf_id_valid_q_packed[current_id-1:0] |
+          data_in_id_field) &&
+          !|(out_buf_id_valid_q_packed[current_id-1:0] |
           ({current_id{in_valid_i && in_ready_o}} &
-          next_id_to_release_onehot_exclude[current_id-1:0])) & release_en_i[current_id-1:0]);
+          next_id_to_release_onehot_exclude[current_id-1:0]));
     end
   end
 

@@ -13,12 +13,20 @@ filesets:
       - rtl/simmem_linkedlist_bank.sv
     file_type: systemVerilogSource
 
-  files_dv_linkedlist_bank:
+  files_dv_linkedlist_bank_common_framework:
     depend:
       - lowrisc:dv_verilator:simutil_verilator
     files:
       - dv/simmem_linkedlist_bank/cpp/simmem_linkedlist_bank_tb.cc: {file_type: cppSource}
       - dv/simmem_linkedlist_bank/rtl/simmem_linkedlist_bank_tb.sv: {file_type: systemVerilogSource}
+
+  files_dv_linkedlist_bank_verilator_vanilla:
+    depend:
+      - lowrisc:dv_verilator:simutil_verilator
+    files:
+      - dv/simmem_linkedlist_bank/cpp/simmem_linkedlist_bank_tb.cc: {file_type: cppSource}
+      - dv/simmem_linkedlist_bank/rtl/simmem_linkedlist_bank_tb.sv: {file_type: systemVerilogSource}
+
 
 targets:
 
