@@ -12,22 +12,18 @@ module simmem_linkedlist_bank_core #(
     input logic clk_i,
     input logic rst_ni,
 
-    // Input from the output buffer selector
+    // Input from the output buffer selector, also serves as an output ready signal
     input logic [2**IDWidth-1:0] next_id_to_release_onehot_i,
 
-    // The identifier must be the first IDWidth bits
     input  logic [IDWidth-1:0] data_id_i,
     input  logic [StructWidth-IDWidth-1:0] data_i,
 
-    output logic [StructWidth-IDWidth-1:0] data_o_id [2**IDWidth-1:0],
-    output logic data_o_id_valid [2**IDWidth-1:0],
+    output logic [StructWidth-IDWidth-1:0] buf_data_o [2**IDWidth-1:0],
+    output logic [2**IDWidth-1:0] buf_data_valid_o,
 
     input  logic in_valid_i,
-    output logic in_ready_o,
-
-    input  logic out_ready_i,
-    output logic out_valid_o
-);
+    output logic in_ready_o
+  );
 
   import simmem_pkg::ram_bank_e;
   import simmem_pkg::ram_port_e;
@@ -97,16 +93,13 @@ module simmem_linkedlist_bank_core #(
         ram_valid_out_mask[current_addr] && |ram_valid_apply_out_mask_id_packed);
   end
 
-  // Choose which identifier to release first
-  logic [2**IDWidth-1:0] next_id_to_release_onehot_packed;
-
-  for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
-    assign next_id_to_release_onehot_packed[current_id] = next_id_to_release_onehot_i[current_id];
-  end
-
   // Expose the content of all the output buffers
-  logic [StructWidth-1:0] data_o_id[2**IDWidth-1:0];
-  logic data_o_id_valid[2**IDWidth-1:0];
+  logic [StructWidth-1:0] buf_data_o[2**IDWidth-1:0];
+  logic buf_data_valid[2**IDWidth-1:0];
+  
+  for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
+    assign buf_data_valid_o[current_id] = buf_data_valid[current_id];
+  end
 
   // Find the next free address and transform next free address from one-hot to binary encoding
   logic next_free_ram_entry_onehot[TotalCapacity-1:0];  // Can be full zero
@@ -261,9 +254,6 @@ module simmem_linkedlist_bank_core #(
     assign ram_valid_in_mask[current_addr] = next_free_ram_entry_binary == current_addr;
   end
 
-  // Output is valid if a release-enabled RAM list is not empty
-  assign out_valid_o = |next_id_to_release_onehot_packed;
-
   // Input is ready if there is room and data is not flowing out
   assign in_ready_o = |(~ram_valid_q_packed) || |(~out_buf_id_valid_q_packed);
 
@@ -276,7 +266,7 @@ module simmem_linkedlist_bank_core #(
       heads_d[current_id] = heads_q[current_id];
       tails_d[current_id] = tails_q[current_id];
       linkedlist_length_d[current_id] = linkedlist_length_q[current_id];
-      data_o_id_valid[current_id] = 1'b0;
+      buf_data_valid[current_id] = 1'b0;
       update_heads_from_ram_d[current_id] = 1'b0;
       ram_valid_apply_in_mask_id[current_id] = 1'b0;
       ram_valid_apply_out_mask_id[current_id] = 1'b0;
@@ -295,15 +285,15 @@ module simmem_linkedlist_bank_core #(
 
       // Expose output buffer data
       if (out_buf_id_valid_q[current_id]) begin : out_buf_valid
-        data_o_id[current_id] = out_buf_id_actual_content[current_id];
-        data_o_id_valid[current_id] = 1'b1;
+        buf_data_o[current_id] = out_buf_id_actual_content[current_id];
+        buf_data_valid[current_id] = 1'b1;
       end else if (in_valid_i && in_ready_o && current_id == data_id_i) begin : out_buf_direct
-        data_o_id[current_id] = data_noid_i};
-        data_o_id_valid[current_id] = 1'b1;
+        buf_data_o[current_id] = data_noid_i};
+        buf_data_valid[current_id] = 1'b1;
       end
 
       // Handshakes: start by output to avoid blocking output with simultaneous inputs
-      if (out_ready_i && out_valid_o && next_id_to_release_onehot_i[current_id] && out_buf_id_valid_q[current_id]) begin : out_handshake
+      if (next_id_to_release_onehot_i[current_id] && out_buf_id_valid_q[current_id]) begin : out_handshake
 
         // If the RAM is not empty
         if (id_valid_ram[current_id]) begin : out_handshake_ram_valid
@@ -337,7 +327,7 @@ module simmem_linkedlist_bank_core #(
 
         if (!out_buf_id_valid_q[current_id]) begin : in_handshake_buf_empty
           // Direct flow from input to output is already implemented in the output handshake block 
-          if (!(out_ready_i && out_valid_o && next_id_to_release_onehot_i[current_id])
+          if (!(next_id_to_release_onehot_i[current_id])
               ) begin : in_handshake_fill_buf
             out_buf_id_valid_d[current_id] = 1'b1;
             out_buf_id_d[current_id] = data_noid_i;
@@ -351,7 +341,7 @@ module simmem_linkedlist_bank_core #(
 
           // Take the input data, considering cases where the RAM list is empty or not
           if (linkedlist_length_q[current_id] >= 2 || linkedlist_length_q[current_id] == 1 &&
-              !(out_ready_i && out_valid_o && next_id_to_release_onehot_i[current_id])
+              !(next_id_to_release_onehot_i[current_id])
               ) begin : in_handshake_ram_will_stay_valid
             tails_d[current_id] = next_free_ram_entry_binary;
 
