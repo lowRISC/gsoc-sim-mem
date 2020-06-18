@@ -2,23 +2,25 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Linkedlist bank for delays in the simulated memory controller
+// Linkedlist bank for messages in the simulated memory controller 
 
-module simmem_linkedlist_delay_bank #(
-    parameter int CounterWidth = 64,  // Width of the message including identifier
+module simmem_linkedlist_bank_out_buf_sel #(
+    parameter int StructWidth = 64,  // Width of the message including identifier
     parameter int TotalCapacity = 128,
     parameter int IDWidth = 4
 ) (
     input logic clk_i,
     input logic rst_ni,
-    
+
+    // Input from the releaser
+    input logic [2**IDWidth-1:0] release_en_i,
+
+    // The identifier must be the first IDWidth bits
+    input  logic [StructWidth-1:0] data_i,
+    output logic [StructWidth-1:0] data_o,
+
     input  logic in_valid_i,
-
-    input logic [IDWidth-1:0] data_id_i,
-    input  logic [CounterWidth-1:0] data_i,
-
-    input logic [IDWidth-1:0] data_id_o,
-    output logic [CounterWidth-1:0] data_o,
+    output logic in_ready_o,
 
     input  logic out_ready_i,
     output logic out_valid_o
@@ -26,6 +28,10 @@ module simmem_linkedlist_delay_bank #(
 
   import simmem_pkg::ram_bank_e;
   import simmem_pkg::ram_port_e;
+
+  // Read the data ID
+  logic [IDWidth-1:0] data_in_id_field;
+  assign data_in_id_field = data_i[IDWidth - 1:0];
 
   // Head, tail and non-empty signals
   logic [$clog2(TotalCapacity)-1:0] heads_d[2**IDWidth-1:0];
@@ -50,10 +56,10 @@ module simmem_linkedlist_delay_bank #(
   end
 
   // Output buffers, contain the next data to output
-  logic [CounterWidth-1:0]
+  logic [StructWidth-IDWidth-1:0]
       out_buf_id_d[2**IDWidth-1:0];  // Needs packing, since stores whole messages delivered at once
-  logic [CounterWidth-1:0] out_buf_id_q[2**IDWidth-1:0];
-  logic [CounterWidth-1:0] out_buf_id_actual_content[2**IDWidth-1:0];
+  logic [StructWidth-IDWidth-1:0] out_buf_id_q[2**IDWidth-1:0];
+  logic [StructWidth-IDWidth-1:0] out_buf_id_actual_content[2**IDWidth-1:0];
   logic out_buf_id_valid_d[2**IDWidth-1:0];
   logic out_buf_id_valid_q[2**IDWidth-1:0];
   logic [2**IDWidth-1:0] out_buf_id_valid_q_packed;
@@ -100,17 +106,17 @@ module simmem_linkedlist_delay_bank #(
   end
 
   // Merge output data from all the identifiers
-  logic [CounterWidth+IDWidth-1:0] data_o_id[2**IDWidth-1:0];
-  logic [CounterWidth+IDWidth-1:0] data_o_id_mask[2**IDWidth-1:0];
-  logic [2**IDWidth-1:0] data_o_id_mask_rot90[CounterWidth+IDWidth-1:0];
+  logic [StructWidth-1:0] data_o_id[2**IDWidth-1:0];
+  logic [StructWidth-1:0] data_o_id_mask[2**IDWidth-1:0];
+  logic [2**IDWidth-1:0] data_o_id_mask_rot90[StructWidth-1:0];
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
     assign data_o_id_mask[current_id] =
-        data_o_id[current_id] & {CounterWidth+IDWidth{next_id_to_release_onehot[current_id]}};
+        data_o_id[current_id] & {StructWidth{next_id_to_release_onehot[current_id]}};
   end
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
     for (
         genvar current_struct_bit = 0;
-        current_struct_bit < CounterWidth+IDWidth;
+        current_struct_bit < StructWidth;
         current_struct_bit = current_struct_bit + 1
     ) begin
       assign data_o_id_mask_rot90[current_struct_bit][current_id] =
@@ -119,19 +125,11 @@ module simmem_linkedlist_delay_bank #(
   end
   for (
       genvar current_struct_bit = 0;
-      current_struct_bit < CounterWidth;
+      current_struct_bit < StructWidth;
       current_struct_bit = current_struct_bit + 1
   ) begin
-    assign data_o[current_struct_bit] = |data_o_id_mask_rot90[current_struct_bit+IDWidth];
+    assign data_o[current_struct_bit] = |data_o_id_mask_rot90[current_struct_bit];
   end
-  for (
-      genvar current_id_bit = 0;
-      current_id_bit < CounterWidth;
-      current_id_bit = current_id_bit + 1
-  ) begin
-    assign data_o_id[current_id_bit] = |data_o_id_mask_rot90[current_id_bit];
-  end
-
 
   // Find the next free address and transform next free address from one-hot to binary encoding
   logic next_free_ram_entry_onehot[TotalCapacity-1:0];  // Can be full zero
@@ -169,7 +167,7 @@ module simmem_linkedlist_delay_bank #(
   logic [2**IDWidth-1:0] req_ram_id_packed[1:0][1:0];
   logic [2**IDWidth-1:0] write_ram_id[1:0][1:0];
 
-  logic [CounterWidth-1:0] wmask_struct_ram;
+  logic [StructWidth-IDWidth-1:0] wmask_struct_ram;
   logic [$clog2(TotalCapacity)-1:0] wmask_next_elem_ram;
 
   logic [$clog2(TotalCapacity)-1:0] addr_ram[1:0][1:0];
@@ -206,14 +204,16 @@ module simmem_linkedlist_delay_bank #(
     end
   end
 
-  logic [CounterWidth-1:0] data_out_struct_ram;
+  logic [StructWidth-IDWidth-1:0] data_in_noid;
+  logic [StructWidth-IDWidth-1:0] data_out_struct_ram;
   logic [$clog2(TotalCapacity)-1:0] data_out_next_elem_ram;
 
-  assign wmask_struct_ram = {CounterWidth - IDWidth{1'b1}};
+  assign data_in_noid = data_i[StructWidth - 1:IDWidth];
+  assign wmask_struct_ram = {StructWidth - IDWidth{1'b1}};
   assign wmask_next_elem_ram = {$clog2(TotalCapacity) {1'b1}};
 
   prim_generic_ram_2p #(
-    .Width(CounterWidth),
+    .Width(StructWidth-IDWidth),
     .DataBitsPerMask(1),
     .Depth(TotalCapacity)
   ) struct_ram_i (
@@ -224,7 +224,7 @@ module simmem_linkedlist_delay_bank #(
     .a_write_i   (write_ram[STRUCT_RAM][RAM_IN]),
     .a_wmask_i   (wmask_struct_ram),
     .a_addr_i    (addr_ram[STRUCT_RAM][RAM_IN]),
-    .a_wdata_i   (data_i),
+    .a_wdata_i   (data_in_noid),
     .a_rdata_o   (),
     
     .b_req_i     (req_ram[STRUCT_RAM][RAM_OUT]),
@@ -271,7 +271,7 @@ module simmem_linkedlist_delay_bank #(
   logic [2**IDWidth-2:0] next_id_to_release_onehot_exclude;
 
   for (genvar current_id = 0; current_id < 2 ** IDWidth - 1; current_id = current_id + 1) begin
-    assign next_id_to_release_onehot_exclude[current_id] = current_id == data_id_i;
+    assign next_id_to_release_onehot_exclude[current_id] = current_id == data_in_id_field;
   end
 
   // Next Id to release from RAM
@@ -279,14 +279,14 @@ module simmem_linkedlist_delay_bank #(
     if (current_id == 0) begin
       assign next_id_to_release_onehot[current_id] =
           (out_buf_id_valid_q[current_id] ||
-           in_valid_i && current_id == data_id_i);
+           in_valid_i && in_ready_o && current_id == data_in_id_field) && release_en_i[current_id];
     end else begin
       assign next_id_to_release_onehot[current_id] =
-          (out_buf_id_valid_q[current_id] || in_valid_i && current_id ==
-          data_id_i) &&
-          !|(out_buf_id_valid_q_packed[current_id-1:0] |
-          ({current_id{in_valid_i}} &
-          next_id_to_release_onehot_exclude[current_id-1:0]));
+          (out_buf_id_valid_q[current_id] || in_valid_i && in_ready_o && current_id ==
+          data_in_id_field) && release_en_i[current_id] &&
+          !|((out_buf_id_valid_q_packed[current_id-1:0] |
+          ({current_id{in_valid_i && in_ready_o}} &
+          next_id_to_release_onehot_exclude[current_id-1:0])) & release_en_i[current_id-1:0]);
     end
   end
 
@@ -309,6 +309,9 @@ module simmem_linkedlist_delay_bank #(
 
   // Output is valid if a release-enabled RAM list is not empty
   assign out_valid_o = |next_id_to_release_onehot_packed;
+
+  // Input is ready if there is room and data is not flowing out
+  assign in_ready_o = |(~ram_valid_q_packed) || |(~out_buf_id_valid_q_packed);
 
   for (
       genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1
@@ -340,7 +343,8 @@ module simmem_linkedlist_delay_bank #(
       if (out_ready_i && out_valid_o && next_id_to_release_onehot[current_id]) begin : out_handshake
 
         if (out_buf_id_valid_q[current_id]) begin : out_handshake_out_buf_valid
-          data_o_id[current_id] = {out_buf_id_actual_content[current_id], current_id[IDWidth-1:0]};
+          data_o_id[current_id] = {out_buf_id_actual_content[current_id],
+                                   current_id[IDWidth - 1:0]};
 
           // If the RAM is not empty
           if (id_valid_ram[current_id]) begin : out_handshake_ram_valid
@@ -361,28 +365,28 @@ module simmem_linkedlist_delay_bank #(
             write_ram_id[NEXT_ELEM_RAM][RAM_OUT][current_id] = 1'b0;
             addr_ram_id[NEXT_ELEM_RAM][RAM_OUT][current_id] = heads_actual[current_id];
 
-          end else if (in_valid_i && current_id == data_id_i
+          end else if (in_valid_i && in_ready_o && current_id == data_in_id_field
               ) begin : out_handshake_refill_buf_from_input
-            out_buf_id_d[current_id] = data_i;
+            out_buf_id_d[current_id] = data_in_noid;
           end else begin : out_handshake_id_now_empty
             out_buf_id_valid_d[current_id] = 1'b0;
           end
         end else begin : out_handshake_direct_flow
-          // The property (in_valid_i && current_id == data_id_i)
+          // The property (in_valid_i && in_ready_o && current_id == data_in_id_field)
           // is granted by next_id_to_release_onehot[current_id] 
-          data_o_id[current_id] = {data_i, current_id[IDWidth-1:0]};
+          data_o_id[current_id] = {data_in_noid, current_id[IDWidth - 1:0]};
         end
 
       end
 
-      if (in_valid_i && current_id == data_id_i) begin : in_handshake
+      if (in_valid_i && in_ready_o && current_id == data_in_id_field) begin : in_handshake
 
         if (!out_buf_id_valid_q[current_id]) begin : in_handshake_buf_empty
           // Direct flow from input to output is already implemented in the output handshake block 
           if (!(out_ready_i && out_valid_o && next_id_to_release_onehot[current_id])
               ) begin : in_handshake_fill_buf
             out_buf_id_valid_d[current_id] = 1'b1;
-            out_buf_id_d[current_id] = data_i;
+            out_buf_id_d[current_id] = data_in_noid;
           end
         end else begin : in_handshake_buf_valid
 
@@ -456,7 +460,5 @@ module simmem_linkedlist_delay_bank #(
       end
     end
   end
-
-  assert (|(~ram_valid_q_packed) || |(~out_buf_id_valid_q_packed)) else $error("Delay bank is full.");
 
 endmodule

@@ -17,7 +17,8 @@ module simmem_delay_bank #(
 
   input logic in_valid_i,
 
-  input logic delay_i,
+  input logic [IDWidth-1:0] delay_id_i,
+  input logic [CounterWidth-1:0] delay_i,
 
   input logic data_out_valid_i,
   input logic data_out_ready_i,
@@ -29,10 +30,10 @@ module simmem_delay_bank #(
 
   logic [CounterWidth-1:0] linkedlist_output;
   
-  logic linkedlist_in_valid;
-  logic linkedlist_in_ready;
+  logic linkedlist_out_valid;
+  logic linkedlist_out_ready;
 
-  logic linkedlist_valid;
+  logic linkedlist_in_valid;
 
   simmem_linkedlist_bank #(
     .StructWidth(CounterWidth),
@@ -42,18 +43,18 @@ module simmem_delay_bank #(
     .clk_i,
     .rst_ni,
 
-    .release_en_i({2**IDWidth-1{1'b1}}),
+    .in_valid_i(linkedlist_in_valid),
 
+    .data_id_i(delay_id_i),
     .data_i(delay_i),
+
+    .data_id_o(delay_o),
     .data_o(linkedlist_output),
 
-    .in_valid_i(linkedlist_in_valid),
-    .in_ready_o(linkedlist_in_ready), // Should be always 1
-
-    .out_ready_i(),
-    .out_valid_o()
+    .out_ready_i(linkedlist_out_ready),
+    .out_valid_o(linkedlist_out_valid)
   );
 
-
+  // Linkedlist 
   
 endmodule
