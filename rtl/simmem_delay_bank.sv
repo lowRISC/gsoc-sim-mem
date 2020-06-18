@@ -10,7 +10,7 @@ module simmem_delay_bank #(
   parameter int TotalCapacity   = 64,
   
   parameter int IDWidth         = 8,
-  parameter int CounterWidth    = 8
+  parameter int CounterWidth    = 64
 )(
   input logic clk_i,
   input logic rst_ni,

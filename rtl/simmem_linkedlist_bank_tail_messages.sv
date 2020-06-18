@@ -16,7 +16,7 @@ module simmem_linkedlist_bank_tail_messages #(
 
     output logic [2**IDWidth-1:0] next_id_to_release_onehot_o,
 
-    input logic [StructWidth-IDWidth-1:0] buf_data_i [2**IDWidth-1:0],
+    input logic [StructWidth-IDWidth-1:0] buf_data_i[2**IDWidth-1:0],
     input logic [2**IDWidth-1:0] buf_data_valid_i,
 
     input  logic out_ready_i,

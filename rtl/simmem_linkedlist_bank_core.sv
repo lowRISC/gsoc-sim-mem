@@ -16,9 +16,9 @@ module simmem_linkedlist_bank_core #(
     input logic [2**IDWidth-1:0] next_id_to_release_onehot_i,
 
     input  logic [IDWidth-1:0] data_id_i,
-    input  logic [StructWidth-IDWidth-1:0] data_i,
+    input  logic [StructWidth-IDWidth-1:0] data_noid_i,
 
-    output logic [StructWidth-IDWidth-1:0] buf_data_o [2**IDWidth-1:0],
+    output logic [StructWidth-IDWidth-1:0] buf_data_o[2**IDWidth-1:0],
     output logic [2**IDWidth-1:0] buf_data_valid_o,
 
     input  logic in_valid_i,
@@ -94,7 +94,7 @@ module simmem_linkedlist_bank_core #(
   end
 
   // Expose the content of all the output buffers
-  logic [StructWidth-1:0] buf_data_o[2**IDWidth-1:0];
+  logic [StructWidth-IDWidth-1:0] buf_data_o[2**IDWidth-1:0];
   logic buf_data_valid[2**IDWidth-1:0];
   
   for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
