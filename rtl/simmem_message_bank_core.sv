@@ -7,23 +7,19 @@
 // Does not support direct replacement (simultaneous write and read in the RAM)
 // Assumes that a message is received by the message bank before it should be released
 
-module simmem_message_bank #(
+module simmem_linkedlist_bank_core #(
     parameter int MessageWidth = 64,  // Width of the message including identifier
     parameter int TotalCapacity = 128
 ) (
     input logic clk_i,
     input logic rst_ni,
 
-    // Reservation signals
-    input logic [IDWidth-1:0] reservation_request_id_i,
-    input logic reservation_request_valid_i,
-    output logic [$clog2(TotalCapacity)-1:0] new_reserved_address_o,
+    input logic next_address_to_release_valid_i,
+    input logic [$clog2(TotalCapacity)-1:0] next_address_to_release_i,
+    output logic [$clog2(TotalCapacity)-1:0] next_free_address_o,
 
-    // Bank I/O signals
     input  logic [MessageWidth-1:0] data_i,
     output logic [MessageWidth-1:0] data_o,
-
-    input logic [TotalCapacity-1:0] releasable_addresses_i, // multi-hot signal
 
     input  logic in_valid_i,
     output logic in_ready_o,
@@ -36,22 +32,20 @@ module simmem_message_bank #(
   logic ram_valid_d[TotalCapacity-1:0];
   logic ram_valid_q[TotalCapacity-1:0];
   logic [TotalCapacity-1:0] ram_valid_q_packed;
-  logic ram_valid_reservation_mask[TotalCapacity-1:0];
+  logic ram_valid_in_mask[TotalCapacity-1:0];
   logic ram_valid_out_mask[TotalCapacity-1:0];
 
   // Prepare the next RAM valid bit array
   for (genvar current_addr = 0; current_addr < TotalCapacity; current_addr = current_addr + 1) begin
     assign ram_valid_d[current_addr] = ram_valid_q[current_addr] ^
-        (ram_valid_reservation_mask[current_addr]) ^ (ram_valid_out_mask[current_addr]);
+        (ram_valid_in_mask[current_addr]) ^ (ram_valid_out_mask[current_addr]);
   end
 
   // Find the next free address and transform next free address from one-hot to binary encoding
   logic next_free_ram_entry_onehot[TotalCapacity-1:0];  // Can be full zero
+  logic [$clog2(TotalCapacity)-1:0] next_free_ram_entry_binary;
   logic [$clog2(TotalCapacity)-1:0] next_free_address_binary_masks[TotalCapacity-1:0];
   logic [TotalCapacity-1:0] next_free_address_binary_masks_rot90[$clog2(TotalCapacity)-1:0];
-  logic [$clog2(TotalCapacity)-1:0] next_free_ram_entry_binary;
-
-  assign new_reserved_address_o = next_free_ram_entry_binary;
 
   for (genvar current_addr = 0; current_addr < TotalCapacity; current_addr = current_addr + 1) begin
     assign next_free_address_binary_masks[current_addr] =
@@ -126,7 +120,7 @@ module simmem_message_bank #(
   for (
       genvar current_addr = 0; current_addr < TotalCapacity; current_addr = current_addr + 1
   ) begin : ram_valid_masks_generation
-    assign ram_valid_reservation_mask[current_addr] = next_free_ram_entry_binary == current_addr && in_valid_i && in_ready_o;
+    assign ram_valid_in_mask[current_addr] = next_free_ram_entry_binary == current_addr && in_valid_i && in_ready_o;
     assign ram_valid_out_mask[current_addr] = next_address_to_release_valid_i && next_address_to_release_i == current_addr && out_valid_o && out_ready_o;
   end
 

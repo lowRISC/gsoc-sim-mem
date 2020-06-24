@@ -10,32 +10,22 @@ filesets:
     depend:
       - lowrisc:prim_generic:ram_2p
     files:
-      - rtl/simmem_linkedlist_bank.sv
+      - rtl/simmem_message_bank.sv
     file_type: systemVerilogSource
 
-  files_dv_linkedlist_bank_common_framework:
-    depend:
-      - lowrisc:dv_verilator:simutil_verilator
+  files_dv_message_bank:
     files:
-      - dv/simmem_linkedlist_bank/cpp/simmem_linkedlist_bank_tb.cc: {file_type: cppSource}
-      - dv/simmem_linkedlist_bank/rtl/simmem_linkedlist_bank_tb.sv: {file_type: systemVerilogSource}
-
-  files_dv_linkedlist_bank_verilator_vanilla:
-    depend:
-      - lowrisc:dv_verilator:simutil_verilator
-    files:
-      - dv/simmem_linkedlist_bank/cpp/simmem_linkedlist_bank_tb.cc: {file_type: cppSource}
-      - dv/simmem_linkedlist_bank/rtl/simmem_linkedlist_bank_tb.sv: {file_type: systemVerilogSource}
-
+      - dv/simmem_message_bank/cpp/simmem_message_bank_tb.h
+      - dv/simmem_message_bank/cpp/simmem_message_bank_tb.cc
+    file_type: cppSource
 
 targets:
-
-  sim_linkedlist_bank:
+  sim_message_bank:
     default_tool: verilator
     filesets:
       - files_rtl
-      - files_dv_linkedlist_bank
-    toplevel: simmem_linkedlist_bank_tb
+      - files_dv_message_bank
+    toplevel: simmem_message_bank_tb
     tools:
       verilator:
         mode: cc
@@ -52,7 +42,7 @@ targets:
 # -O
 #   Optimization levels have a large impact on the runtime performance of the
 #   simulation model. -O2 and -O3 are pretty similar, -Os is slower than -O2/-O3
-          - '-CFLAGS "-std=c++11 -Wall -DVM_TRACE_FMT_FST -DTOPLEVEL_NAME=simmem_linkedlist_bank_tb -g -O0"'
+          - '-CFLAGS "-std=c++11 -Wall -DVM_TRACE_FMT_FST -DTOPLEVEL_NAME=simmem_message_bank_tb -g -O0"'
           - '-LDFLAGS "-pthread -lutil"'
           - "-Wall"
           - "-Wno-PINCONNECTEMPTY"
