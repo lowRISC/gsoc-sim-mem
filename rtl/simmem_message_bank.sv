@@ -16,14 +16,16 @@ module simmem_message_bank #(
 
     // Reservation signals
     input logic [IDWidth-1:0] reservation_request_id_i,
-    input logic reservation_request_valid_i,
     output logic [$clog2(TotalCapacity)-1:0] new_reserved_address_o,
+
+    input logic reservation_request_ready_i,
+    output logic reservation_request_valid_o,
 
     // Bank I/O signals
     input  logic [MessageWidth-1:0] data_i,
     output logic [MessageWidth-1:0] data_o,
 
-    input logic [TotalCapacity-1:0] releasable_addresses_i, // multi-hot signal
+    input logic [TotalCapacity-1:0] release_en_i, // multi-hot signal
 
     input  logic in_valid_i,
     output logic in_ready_o,
@@ -31,6 +33,31 @@ module simmem_message_bank #(
     input  logic out_ready_i,
     output logic out_valid_o
   );
+
+  import simmem_pkg::ram_bank_e;
+  import simmem_pkg::ram_port_e;
+
+  // Read the data ID
+  logic [IDWidth-1:0] data_in_id_field;
+  assign data_in_id_field = data_i[IDWidth - 1:0];
+
+  // Head, tail and length signals
+  logic [$clog2(TotalCapacity)-1:0] heads_d[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] heads_q[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] tails_d[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] tails_q[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] reservation_tails_d[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] reservation_tails_q[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] actual_length_d[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] actual_length_q[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] reservation_length_d[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] reservation_length_q[2**IDWidth-1:0];
+
+  // Output valid and address
+  logic [$clog2(TotalCapacity)-1:0] current_output_valid_d[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] current_output_valid_q[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] current_output_address_d[2**IDWidth-1:0];
+  logic [$clog2(TotalCapacity)-1:0] current_output_address_q[2**IDWidth-1:0];
 
   // Valid bits and pointer to next arrays. Masks update the valid bits
   logic ram_valid_d[TotalCapacity-1:0];
@@ -120,13 +147,57 @@ module simmem_message_bank #(
         !ram_valid_q[current_addr] && &ram_valid_q_packed[current_addr - 1:0];
   end
 
-  // IdValid signals, ramValid masks
+  // Next AXI identifier to release
 
-  // Idea: change ram_valid_out_mask somehow directly in sequential logic 
+  logic next_id_to_release_onehot[2**IDWidth-1:0];
+  logic [TotalCapacity-1:0] next_address_to_release_onehot_id[2**IDWidth-1:0];
+  logic [2**IDWidth-1:0] next_id_to_release_onehot_packed;
+  logic [TotalCapacity-1:0] next_id_to_release_multihot [2**IDWidth-2:0];
+  logic [TotalCapacity-1:0][2**IDWidth-2:0] next_id_to_release_multihot_rot90;
+
+  for (genvar current_id = 0; current_id < 2 ** IDWidth - 1; current_id = current_id + 1) begin
+    assign next_id_to_release_onehot_packed[current_id] = next_id_to_release_onehot[current_id];
+
+    for (genvar current_addr = 0; current_addr < TotalCapacity; current_addr = current_addr + 1) begin
+      assign next_id_to_release_multihot[current_id][current_addr] = |(actual_length_q[current_id]) && heads_q[current_id] == current_addr;
+      assign next_id_to_release_multihot_rot90[current_addr][current_id] = next_id_to_release_multihot[current_id][current_addr];
+    end
+  end
+
+  // Next Id to release from RAM
+  for (genvar current_id = 0; current_id < 2 ** IDWidth; current_id = current_id + 1) begin
+    for (
+      genvar current_addr = 0; current_addr < TotalCapacity; current_addr = current_addr + 1
+    ) begin
+
+      if (current_addr == 0) begin
+        assign next_address_to_release_onehot_id[current_id][current_addr] = next_id_to_release_multihot[current_id][current_addr];
+      end else begin
+        assign next_address_to_release_onehot_id[current_id][current_addr] = next_id_to_release_multihot[current_id][current_addr] && !(next_id_to_release_multihot_rot90[current_id-1:0]);
+      end
+      
+    if (current_id == 0) begin
+      assign next_id_to_release_onehot[current_id] =
+          (heads_q[current_id] && release_en_i[current_id];
+    end else begin
+      assign next_id_to_release_onehot[current_id] =
+          (out_buf_id_valid_q[current_id] || in_valid_i && in_ready_o && current_id ==
+          data_in_id_field) && release_en_i[current_id] &&
+          !|((out_buf_id_valid_q_packed[current_id-1:0] |
+          ({current_id{in_valid_i && in_ready_o}} &
+          next_id_to_release_multihot[current_id-1:0])) & release_en_i[current_id-1:0]);
+      end
+    end
+  end
+
+
+
+  // RamValid masks
+
   for (
       genvar current_addr = 0; current_addr < TotalCapacity; current_addr = current_addr + 1
   ) begin : ram_valid_masks_generation
-    assign ram_valid_reservation_mask[current_addr] = next_free_ram_entry_binary == current_addr && in_valid_i && in_ready_o;
+    assign ram_valid_reservation_mask[current_addr] = next_free_ram_entry_binary == current_addr && reservation_request_valid_o && reservation_request_ready_i;
     assign ram_valid_out_mask[current_addr] = next_address_to_release_valid_i && next_address_to_release_i == current_addr && out_valid_o && out_ready_o;
   end
 
@@ -142,7 +213,7 @@ module simmem_message_bank #(
       // Default assignments
       heads_d[current_id] = heads_q[current_id];
       tails_d[current_id] = tails_q[current_id];
-      linkedlist_length_d[current_id] = linkedlist_length_q[current_id];
+      actual_length_d[current_id] = actual_length_q[current_id];
       buf_data_valid[current_id] = 1'b0;
       update_heads_from_ram_d[current_id] = 1'b0;
       ram_valid_apply_in_mask_id[current_id] = 1'b0;
@@ -184,7 +255,7 @@ module simmem_message_bank #(
           // Free the head entry in the RAM using a XOR mask
           ram_valid_apply_out_mask_id[current_id] = 1'b1;
 
-          linkedlist_length_d[current_id] -= 1;
+          actual_length_d[current_id] -= 1;
 
           // Update the head position in the RAM
           req_ram_id[NEXT_ELEM_RAM][RAM_OUT][current_id] = 1'b1;
@@ -214,10 +285,10 @@ module simmem_message_bank #(
           // Mark address as taken
           ram_valid_apply_in_mask_id[current_id] = 1'b1;
 
-          linkedlist_length_d[current_id] = linkedlist_length_q[current_id] + 1;
+          actual_length_d[current_id] = actual_length_q[current_id] + 1;
 
           // Take the input data, considering cases where the RAM list is empty or not
-          if (linkedlist_length_q[current_id] >= 2 || linkedlist_length_q[current_id] == 1 &&
+          if (actual_length_q[current_id] >= 2 || actual_length_q[current_id] == 1 &&
               !(next_id_to_release_onehot_i[current_id])
               ) begin : in_handshake_ram_will_stay_valid
             tails_d[current_id] = next_free_ram_entry_binary;
@@ -253,7 +324,7 @@ module simmem_message_bank #(
       if (~rst_ni) begin
         heads_q[current_id] <= '0;
         tails_q[current_id] <= '0;
-        linkedlist_length_q[current_id] <= '0;
+        actual_length_q[current_id] <= '0;
         update_heads_from_ram_q[current_id] <= '0;
 
         out_buf_id_valid_q[current_id] <= '0;
@@ -262,7 +333,7 @@ module simmem_message_bank #(
       end else begin
         heads_q[current_id] <= heads_d[current_id];
         tails_q[current_id] <= tails_d[current_id];
-        linkedlist_length_q[current_id] <= linkedlist_length_d[current_id];
+        actual_length_q[current_id] <= actual_length_d[current_id];
         update_heads_from_ram_q[current_id] <= update_heads_from_ram_d[current_id];
 
         out_buf_id_q[current_id] <= out_buf_id_d[current_id];
