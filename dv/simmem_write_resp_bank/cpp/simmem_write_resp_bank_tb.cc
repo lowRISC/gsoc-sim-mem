@@ -91,6 +91,7 @@ struct WriteRespBankTestbench {
 
   void apply_input_data(int data_i) {
     m_module->data_i = data_i;
+    m_module->in_valid_i = 1;
   }
 };
 
@@ -106,7 +107,7 @@ int main(int argc, char **argv, char **env)
 
   tb->reset();
   tb->reserve(4);
-  tb->apply_input_data(4|9);
+  tb->apply_input_data(4);
 
 	while (!tb->is_done())
 	{		
