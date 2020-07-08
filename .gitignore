@@ -1,0 +1,13 @@
+*~
+*.bak
+
+# fusesoc result and build directories with special suffixes
+build/
+
+# Simulation Results
+*.log
+
+# verilator/gtkwave waveforms and wave lists
+*.fst
+*.gtkw
+*.hier

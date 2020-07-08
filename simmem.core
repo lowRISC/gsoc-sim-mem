@@ -1,0 +1,42 @@
+CAPI=2:
+# Copyright lowRISC contributors.
+# Licensed under the Apache License, Version 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+name: "::simmem:0.1"
+description: "Simulated memory controller"
+
+filesets:
+  files_rtl_resp_bank:
+    depend:
+      - lowrisc:prim_generic:ram_2p
+    files:
+      - rtl/simmem_pkg.sv
+      - rtl/simmem_resp_bank.sv
+    file_type: systemVerilogSource
+
+  files_dv_resp_bank:
+    files:
+      - dv/simmem_resp_bank/cpp/simmem_resp_bank_tb.cc
+    file_type: cppSource
+
+targets:
+  sim_resp_bank:
+    default_tool: verilator
+    filesets:
+      - files_rtl_resp_bank
+      - files_dv_resp_bank
+    toplevel: simmem_resp_bank
+    tools:
+      verilator:
+        mode: cc
+        verilator_options:
+          - '--trace'
+          - '--trace-fst' # this requires -DVM_TRACE_FMT_FST in CFLAGS below!
+          - '--trace-structs'
+          - '--trace-params'
+          - '--trace-max-array 1024'
+          - '-CFLAGS "-std=c++11 -Wall -DVM_TRACE_FMT_FST -DTOPLEVEL_NAME=simmem_resp_bank_tb -g -O0"'
+          - '-LDFLAGS "-pthread -lutil"'
+          - "-Wall"
+          - "-Wno-PINCONNECTEMPTY"
+          - "-Wno-fatal"
