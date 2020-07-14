@@ -35,6 +35,6 @@ const uint64_t BUserWidth = 0;
 
 const uint64_t WStrbWidth = XDataWidth >> 3;
 
-const unsigned int PackedWidth = 64;
+const unsigned int PackedW = 64;
 
-#endif  // SIMMEM_DV_AXI_DIMENSIONS
+#endif // SIMMEM_DV_AXI_DIMENSIONS
