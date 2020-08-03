@@ -1,7 +1,7 @@
 // Copyright lowRISC contributors. Licensed under the Apache License, Version 2.0, see LICENSE for
 // details. SPDX-License-Identifier: Apache-2.0
 //
-// Linked list bank for responses in the simulated memory controller 
+// Linked list bank for responses in the simulated memory controller with burst support
 
 // Response banks provide a multi-FIFO storage with reservation functionality for responses coming
 // from the real memory controller. The FIFOs are implemented as linked lists, sharing the same
@@ -66,15 +66,25 @@
 //    that if the pointer b is not updated, then a remains untouched as well) that maintains the
 //    pointer ordering.
 
-module simmem_resp_bank (
+module simmem_resp_bank #(
+    parameter int unsigned MaxBurstLen = 4,
+    parameter int unsigned TotCapa = simmem_pkg::ReadDataBankCapacity,
+    parameter type DataType = simmem_pkg::rdata_t,
+
+    localparam int unsigned BurstLenWidth = $clog2 (MaxBurstLen + 1),  // derived parameter
+    localparam int unsigned BankAddrWidth = $clog2 (TotCapa),  // derived parameter
+    localparam int unsigned DataWidth = $bits (DataType)  // derived parameter
+) (
   input logic clk_i,
   input logic rst_ni,
 
   // Reservation interface AXI identifier for which the reseration request is being done.
-  input  logic [NumIds-1:0] rsv_req_id_onehot_i,
+  input  logic [simmem_pkg::NumIds-1:0] rsv_req_id_onehot_i,
   // Information about currently reserved address. Will be stored by other modules as an internal
   // identifier to uniquely identify the response (or response burst in case of read data).
   output logic [BankAddrWidth-1:0] rsv_addr_o,
+  // The number of data elements to reserve in the RAM cell.
+  input  logic [BurstLenWidth-1:0] rsv_burst_len_i,
   // Reservation handshake signals
   input  logic rsv_valid_i,
   output logic rsv_ready_o, 
@@ -82,12 +92,13 @@ module simmem_resp_bank (
   // Interface with the releaser Multi-hot signal that enables the release for given internal
   // addresses (i.e., RAM addresses).
   input  logic [TotCapa-1:0] release_en_i,
-  // Signals which address has been released, if any. One-hot signal.
-  output logic [TotCapa-1:0] released_addr_o,
+  // Signals which address has been released, if any. One-hot signal. Is set to one for each
+  // released response in a burst.
+  output logic [TotCapa-1:0] released_addr_onehot_o,
 
   // Interface with the real memory controller AXI response excluding handshake
-  input  simmem_pkg::wresp_t rsp_i,
-  output simmem_pkg::wresp_t rsp_o,
+  input  DataType rsp_i,
+  output DataType rsp_o,
   // Response acquisition handshake signal
   input  logic in_rsp_valid_i,
   output logic in_rsp_ready_o,
@@ -99,12 +110,11 @@ module simmem_resp_bank (
 
   import simmem_pkg::*;
 
-  localparam TotCapa = WriteRespBankCapacity;
-  localparam BankAddrWidth = WriteRespBankAddrWidth;
-
-  localparam MsgRamWidth = $bits(wresp_t) - IDWidth;
+  localparam int PayloadWidth = DataWidth - IDWidth;
+  localparam int PayloadRamWidth = MaxBurstLen * PayloadWidth;
 
   typedef struct packed {logic [BankAddrWidth-1:0] nxt_elem;} metadata_e;
+
 
   //////////////////
   // RAM pointers //
@@ -181,7 +191,7 @@ module simmem_resp_bank (
 
   // Update signals are used to update pointers regular operation, following the linked list order.
   logic update_t_from_pt[NumIds];
-  logic update_t_from_ram_q[NumIds];
+  logic update_pt_from_ram_q[NumIds];
   logic update_pt_from_ram_d[NumIds];
   logic update_rsp_from_ram_d[NumIds];
   logic update_rsp_from_ram_q[NumIds];
@@ -208,7 +218,7 @@ module simmem_resp_bank (
     assign rsp_heads[i_id] =
         update_rsp_from_ram_q[i_id] ? meta_ram_out_rsp_head.nxt_elem : rsp_heads_q[i_id];
 
-    always_comb begin : tail_d_assignment
+    always_comb begin
       // The next tail is either piggybacked with the head, or follows the pre_tail, or keeps its
       // value. If it is piggybacked by the response head pointer, then the update is done in the
       // next cycle.
@@ -219,59 +229,164 @@ module simmem_resp_bank (
       end else begin
         tails_d[i_id] = tails[i_id];
       end
-    end : tail_d_assignment
+    end
     assign tails[i_id] = pgbk_t_with_rsp_q[i_id] ? rsp_heads[i_id] : tails_q[i_id];
 
     assign pre_tails_d[i_id] = pgbk_pt_with_rsv[i_id] ? rsv_heads_d[i_id] : pre_tails[i_id];
-    always_comb begin : tail_assignment
+    always_comb begin
       if (pgbk_pt_with_rsp_q[i_id]) begin
         pre_tails[i_id] = rsp_heads[i_id];
-      end else if (update_t_from_ram_q[i_id]) begin
+      end else if (update_pt_from_ram_q[i_id]) begin
         pre_tails[i_id] = meta_ram_out_rsp_tail.nxt_elem;
       end else begin
         pre_tails[i_id] = pre_tails_q[i_id];
       end
-    end : tail_assignment
+    end
 
     assign rsv_heads_d[i_id] = update_rsv_heads[i_id] ? nxt_free_addr : rsv_heads_q[i_id];
   end
+
+
+  /////////////////////////
+  // Burst count in cell //
+  /////////////////////////
+
+  //  This part is dedicated to counting the burst elements in a RAM cell.
+  //
+  //  Counters:
+  //    * rsv_cnt_d, rsv_cnt_q: Count the elements reserved but not acquired yet in a given RAM
+  //      address. The counters are set at reservation time and decreased when responses are stored
+  //      in the corresponding cell.
+  //    * rsp_cnt_d, rsp_cnt_q: Count the elements contained in a given RAM address. The counters
+  //      are increased when responses are acquired and decreased when data is released.
+  //
+  //  Counters are updated using three masks:
+  //    * cnt_rsv_mask: contains at most one bit to one, where a new reservation is performed.
+  //    * cnt_in_mask: contains at most one bit to one, where a response is accepted. This mask is
+  //      collaboratively built by all linkedlists using the signals cnt_in_mask_id.
+  //    * cnt_out_mask: contains at most one bit to one, where a response is released.
+  //
+  //  Per-linked list counters: Each linked list has its own counters to track how many responses
+  //  are in certain cells. These are not new physical counters. Instead, they base on rsv_cnt and
+  //  rsp_cnt counters. Each linked list has the following logical counters:
+  //    * rsv_cnt_id: Tracks the number of responses reserved but not acquired yet in the RAM cell
+  //      pointed by the response head pointer. This is useful to track when to update the rsp_head
+  //      pointer.
+  //    * rsp_cnt_id: Tracks the number of responses contained under the response head pointer. This
+  //      is useful to set the input mask of the payload RAM.
+  //    * pre_tail_cnt_id: Tracks the number of responses contained under the pre_tail pointer. This
+  //      is useful to set the output mask of the payload RAM.
+  //    * tail_cnt_id: Tracks the number of responses contained under the tail pointer. This is
+  //      useful to set the output mask of the payload RAM.
+
+  logic [BurstLenWidth-1:0] rsv_cnt_d[TotCapa];
+  logic [BurstLenWidth-1:0] rsv_cnt_q[TotCapa];
+  logic [BurstLenWidth-1:0] rsp_cnt_d[TotCapa];
+  logic [BurstLenWidth-1:0] rsp_cnt_q[TotCapa];
+
+  logic [TotCapa-1:0] cnt_rsv_mask;
+  logic [TotCapa-1:0][NumIds-1:0] cnt_in_mask_id;
+  logic cnt_in_mask[TotCapa];
+  logic [TotCapa-1:0] cnt_out_mask;
+
+  for (genvar i_addr = 0; i_addr < TotCapa; i_addr = i_addr + 1) begin : cnt_update
+
+    // A reservation mask bit is set to one if there is a successful reservation handshake and this
+    // bit corresponds to the next address to reserve (i.e., the next free address).
+    assign cnt_rsv_mask[i_addr] = nxt_free_addr == i_addr && rsv_ready_o && rsv_valid_i;
+
+    // An output mask bit is set to one if there is a successful output handshake and this bit
+    // corresponds to address of the data at the output.
+    assign
+        cnt_out_mask[i_addr] = cur_out_addr_onehot_q[i_addr] && out_rsp_valid_o && out_rsp_ready_i;
+
+    for (genvar i_id = 0; i_id < NumIds; i_id = i_id + 1) begin : gen_cnt_in_mask
+      // Here is looked at which address the incoming response would land, if there were an incoming
+      // response.
+      assign cnt_in_mask_id[i_addr][i_id] =
+          rsp_i.merged_payload.id == i_id && rsp_heads[i_id] == i_addr;
+    end : gen_cnt_in_mask
+    // Using the previous information, aggregated among all linked lists, we set the corresponding
+    // bit to one if there is actually an incoming response.
+    assign cnt_in_mask[i_addr] = in_rsp_ready_o && in_rsp_valid_i && |cnt_in_mask_id[i_addr];
+
+    always_comb begin
+      rsv_cnt_d[i_addr] = rsv_cnt_q[i_addr];
+      rsp_cnt_d[i_addr] = rsp_cnt_q[i_addr];
+
+      // Update the counters according to the masks
+      if (cnt_rsv_mask[i_addr]) begin
+        rsv_cnt_d[i_addr] = rsv_burst_len_i;
+      end else if (cnt_in_mask[i_addr]) begin
+        rsv_cnt_d[i_addr] = rsv_cnt_q[i_addr] - 1;
+        rsp_cnt_d[i_addr] = rsp_cnt_q[i_addr] + 1;
+      end
+      if (cnt_out_mask[i_addr]) begin
+        rsp_cnt_d[i_addr] = rsp_cnt_q[i_addr] - 1;
+      end
+    end
+  end : cnt_update
+  assign released_addr_onehot_o = cnt_out_mask;
+
+  // Intermediate signals to calculate counts
+  logic [TotCapa-1:0][BurstLenWidth-1:0] rsv_cnt_addr[NumIds];
+  logic [TotCapa-1:0][BurstLenWidth-1:0] rsp_cnt_addr[NumIds];
+  logic [TotCapa-1:0][BurstLenWidth-1:0] pre_tail_cnt_addr[NumIds];
+  logic [TotCapa-1:0][BurstLenWidth-1:0] tail_cnt_addr[NumIds];
+  // Intermediate aggregation signals
+  logic [BurstLenWidth-1:0][TotCapa-1:0] rsv_cnt_addr_rot90[NumIds];
+  logic [BurstLenWidth-1:0][TotCapa-1:0] rsp_cnt_addr_rot90[NumIds];
+  logic [BurstLenWidth-1:0][TotCapa-1:0] pre_tail_cnt_addr_rot90[NumIds];
+  logic [BurstLenWidth-1:0][TotCapa-1:0] tail_cnt_addr_rot90[NumIds];
+  // Actual counts per linked list
+  logic [BurstLenWidth-1:0] rsv_cnt_id[NumIds];
+  logic [BurstLenWidth-1:0] rsp_cnt_id[NumIds];
+  logic [BurstLenWidth-1:0] pre_tail_cnt_id[NumIds];
+  logic [BurstLenWidth-1:0] tail_cnt_id[NumIds];
+
+  // Assign the count intermediate signals
+  for (genvar i_id = 0; i_id < NumIds; i_id = i_id + 1) begin : gen_cnt
+    for (genvar i_addr = 0; i_addr < TotCapa; i_addr = i_addr + 1) begin : gen_cnt_addr
+      assign rsv_cnt_addr[i_id][i_addr] =
+          rsv_cnt_q[i_addr] & {BurstLenWidth{rsp_heads[i_id] == i_addr && |rsv_len_q[i_id]}};
+      assign rsp_cnt_addr[i_id][i_addr] = rsp_cnt_q[i_addr] & {
+          BurstLenWidth{rsp_heads[i_id] == i_addr && (|rsv_len_q[i_id] || |rsp_len_q[i_id])}};
+      assign pre_tail_cnt_addr[i_id][i_addr] =
+          rsp_cnt_q[i_addr] & {BurstLenWidth{pre_tails[i_id] == i_addr}};
+      assign
+          tail_cnt_addr[i_id][i_addr] = rsp_cnt_q[i_addr] & {BurstLenWidth{tails[i_id] == i_addr}};
+
+      for (genvar i_bit = 0; i_bit < BurstLenWidth; i_bit = i_bit + 1) begin : gen_cnt_addr_rot
+        assign rsv_cnt_addr_rot90[i_id][i_bit][i_addr] = rsv_cnt_addr[i_id][i_addr][i_bit];
+        assign rsp_cnt_addr_rot90[i_id][i_bit][i_addr] = rsp_cnt_addr[i_id][i_addr][i_bit];
+        assign
+            pre_tail_cnt_addr_rot90[i_id][i_bit][i_addr] = pre_tail_cnt_addr[i_id][i_addr][i_bit];
+        assign tail_cnt_addr_rot90[i_id][i_bit][i_addr] = tail_cnt_addr[i_id][i_addr][i_bit];
+      end : gen_cnt_addr_rot
+    end : gen_cnt_addr
+
+    for (genvar i_bit = 0; i_bit < BurstLenWidth; i_bit = i_bit + 1) begin : gen_cnt_after_rot
+      assign rsv_cnt_id[i_id][i_bit] = |rsv_cnt_addr_rot90[i_id][i_bit];
+      assign rsp_cnt_id[i_id][i_bit] = |rsp_cnt_addr_rot90[i_id][i_bit];
+      assign pre_tail_cnt_id[i_id][i_bit] = |pre_tail_cnt_addr_rot90[i_id][i_bit];
+      assign tail_cnt_id[i_id][i_bit] = |tail_cnt_addr_rot90[i_id][i_bit];
+    end : gen_cnt_after_rot
+  end : gen_cnt
 
 
   ///////////////
   // RAM valid //
   ///////////////
 
-  //  In this part, the RAM valid bits are declared and updated. A RAM cell is set to valid when it
-  //  is reserved. The valid bit is reset to zero when the cell is output to the requester (after
-  //  having hosted a response, which is only possible after a reservation).
-  //
-  //  RAM valid bits are updated using two XOR masks:
-  //  * ram_v_rsv_mask: contains at most one bit to one, where a new reservation is performed.
-  //  * ram_v_out_mask: contains at most one bit to one, where a RAM cell is becoming free.
+  // RAM addresses are said valid iff the corresponding reservation or response counter is not zero.
+  // In simple words, it means that the address has either reserved space or contains some data (or
+  // both).
 
-  // Valid bits and pointer to next arrays. Masks update the valid bits
-  logic [TotCapa-1:0] ram_v_d;
-  logic [TotCapa-1:0] ram_v_q;
-  logic [TotCapa-1:0] ram_v_rsv_mask;
-  logic [TotCapa-1:0] ram_v_out_mask;
+  logic [TotCapa-1:0] ram_v;
 
-  // Prepare the next RAM valid bit array
   for (genvar i_addr = 0; i_addr < TotCapa; i_addr = i_addr + 1) begin : ram_v_update
-
-    // Generate the ram valid masks
-    assign ram_v_rsv_mask[i_addr] = nxt_free_addr == i_addr && rsv_ready_o && rsv_valid_i;
-    assign ram_v_out_mask[i_addr] =
-        cur_out_addr_onehot_q[i_addr] && out_rsp_valid_o && out_rsp_ready_i;
-
-    always_comb begin
-      ram_v_d[i_addr] = ram_v_q[i_addr];
-      // Mark the newly reserved addressed as valid, if applicable
-      ram_v_d[i_addr] ^= ram_v_rsv_mask[i_addr];
-      // Mark the newly released addressed as invalid, if applicable
-      ram_v_d[i_addr] ^= ram_v_out_mask[i_addr];
-    end
-  end
-  assign released_addr_o = ram_v_out_mask;
+    assign ram_v[i_addr] = |rsp_cnt_q[i_addr] || |rsv_cnt_q[i_addr];
+  end : ram_v_update
 
 
   /////////////////////////
@@ -293,21 +408,21 @@ module simmem_resp_bank (
   // Genereate the next free address onehot signal
   for (genvar i_addr = 0; i_addr < TotCapa; i_addr = i_addr + 1) begin : gen_nxt_free_addr_onehot
     if (i_addr == 0) begin
-      assign nxt_free_addr_onehot[0] = ~ram_v_q[0];
+      assign nxt_free_addr_onehot[0] = ~ram_v[0];
     end else begin
-      assign nxt_free_addr_onehot[i_addr] = ~ram_v_q[i_addr] && &ram_v_q[i_addr - 1:0];
+      assign nxt_free_addr_onehot[i_addr] = ~ram_v[i_addr] && &ram_v[i_addr - 1:0];
     end
   end : gen_nxt_free_addr_onehot
 
   // Get the next free address binary signal from the corresponding onehot signal
-  always_comb begin : get_nxt_free_addr_from_onehot
+  always_comb begin
     nxt_free_addr = '0;
     for (int unsigned i_addr = 0; i_addr < TotCapa; i_addr = i_addr + 1) begin
       if (nxt_free_addr_onehot[i_addr]) begin
         nxt_free_addr = i_addr[BankAddrWidth - 1:0];
       end
     end
-  end : get_nxt_free_addr_from_onehot
+  end
 
   assign rsv_addr_o = nxt_free_addr;
 
@@ -325,43 +440,79 @@ module simmem_resp_bank (
   //
   //  Some signals are set globally, and others are aggregated from all linked lists. The latter
   //  are:
-  //    * payload_ram_in_addr_id,     as the address should be the response head pointer value.
-  //    * payload_ram_out_addr_id,    as the address should be the pre_tail or tail pointer value.
+  //    * pyld_ram_in_addr_id,     as the address should be the response head pointer value.
+  //    * pyld_ram_out_addr_id,    as the address should be the pre_tail or tail pointer value.
   //    * meta_ram_in_addr_id,        as the address may be the reservation head pointer value.
   //    * meta_ram_out_addr_tail_id,  as the address should be the tail pointer value.
   //    * meta_ram_out_addr_rsp_head_id,   as the address should be the response head pointer value.
   //
   //  Rotated signals are used to aggregate the signals, where the dimensions have to be transposed.
+  //
+  // Mask generation: The payload RAM write masks (pyld_ram_in_wmask and
+  // pyld_ram_out_wmask_d) are generated based on the response counters. The
+  // output mask must be registered, because it is calculated in the clock cycle before
+  // the output data is available.
+  //
+  //  Mask expansion: As the RAMs require masks as wide as the data words, payload RAM masks are
+  //  expanded to fit with the required format.
+  //
+  //  Payload RAM input and output data: The input data (pyld_ram_in_burst_data) is the input
+  //  payload repeated periodically. The mask indicates the location of the data. The output data
+  //  (pyld_ram_burst_data) is extracted from the payload RAM data from the payload RAM
+  //  (pyld_ram_out_burst_data) using the mask information.
 
-  logic payload_ram_in_req, payload_ram_out_req;
+  logic pyld_ram_in_req, pyld_ram_out_req;
   logic meta_ram_in_req, meta_ram_out_req;
 
-  logic payload_ram_in_write, payload_ram_out_write;
+  logic pyld_ram_in_write, pyld_ram_out_write;
   logic meta_ram_in_write, meta_ram_out_write;
 
-  logic [MsgRamWidth-1:0] payload_ram_in_wmask, payload_ram_out_wmask;
-  logic [BankAddrWidth-1:0] meta_ram_in_wmask, meta_ram_out_wmask;
+  logic [MaxBurstLen-1:0] pyld_ram_in_wmask;
+  logic [MaxBurstLen-1:0] pyld_ram_out_wmask_d, pyld_ram_out_wmask_q;
+  logic [MaxBurstLen-1:0] pyld_ram_in_wmask_id[NumIds];
+  logic [MaxBurstLen-1:0] pyld_ram_out_wmask_id[NumIds];
+  logic [MaxBurstLen-1:0][NumIds-1:0] pyld_ram_in_wmask_id_rot90;
+  logic [MaxBurstLen-1:0][NumIds-1:0] pyld_ram_out_wmask_id_rot90;
+  // The signal to be provided to the payload RAM, which requires the wmask to be as long as the
+  // data.
+  logic [PayloadRamWidth-1:0] pyld_ram_in_wmask_expanded;
+  logic [PayloadRamWidth-1:0] pyld_ram_out_wmask_expanded;
 
-  logic [MsgRamWidth-1:0] payload_ram_out_data;
-  metadata_e meta_ram_out_rsp_tail, meta_ram_out_rsp_head;
+  logic [BankAddrWidth-1:0] meta_ram_in_wmask, meta_ram_out_wmask;
 
   metadata_e meta_ram_in_content;
   metadata_e meta_ram_in_content_id[NumIds];
   logic [NumIds - 1:0] meta_ram_in_content_msk_rot90[BankAddrWidth];
 
-  // RAM address and aggregation response
-  logic [BankAddrWidth-1:0] payload_ram_in_addr;
-  logic [BankAddrWidth-1:0] payload_ram_out_addr;
+  // Aggregate the read/write masks
+  for (genvar i_id = 0; i_id < NumIds; i_id = i_id + 1) begin : aggregate_wmask_id
+    for (genvar i_bit = 0; i_bit < MaxBurstLen; i_bit = i_bit + 1) begin : aggregate_wmask_id_rot
+      assign pyld_ram_in_wmask_id_rot90[i_bit][i_id] = pyld_ram_in_wmask_id[i_id][i_bit];
+      assign pyld_ram_out_wmask_id_rot90[i_bit][i_id] = pyld_ram_out_wmask_id[i_id][i_bit];
+    end : aggregate_wmask_id_rot
+  end : aggregate_wmask_id
+  for (genvar i_bit = 0; i_bit < MaxBurstLen; i_bit = i_bit + 1) begin : aggregate_wmask
+    assign pyld_ram_in_wmask[i_bit] = |pyld_ram_in_wmask_id_rot90[i_bit];
+    assign pyld_ram_out_wmask_d[i_bit] = |pyld_ram_out_wmask_id_rot90[i_bit];
+  end : aggregate_wmask
+
+  metadata_e meta_ram_out_rsp_tail, meta_ram_out_rsp_head;
+
+  // RAM address and aggregation
+  logic [BankAddrWidth-1:0] pyld_ram_in_addr;
+  logic [BankAddrWidth-1:0] pyld_ram_out_addr;
   logic [BankAddrWidth-1:0] meta_ram_in_addr;
   logic [BankAddrWidth-1:0] meta_ram_out_addr_tail;
   logic [BankAddrWidth-1:0] meta_ram_out_addr_rsp_head;
-  logic [BankAddrWidth-1:0] payload_ram_in_addr_id[NumIds];
-  logic [BankAddrWidth-1:0] payload_ram_out_addr_id[NumIds];
+  // Per-linked list intermediate signals
+  logic [BankAddrWidth-1:0] pyld_ram_in_addr_id[NumIds];
+  logic [BankAddrWidth-1:0] pyld_ram_out_addr_id[NumIds];
   logic [BankAddrWidth-1:0] meta_ram_in_addr_id[NumIds];
   logic [BankAddrWidth-1:0] meta_ram_out_addr_tail_id[NumIds];
   logic [BankAddrWidth-1:0] meta_ram_out_addr_rsp_head_id[NumIds];
-  logic [BankAddrWidth-1:0][NumIds-1:0] payload_ram_in_addr_rot90;
-  logic [BankAddrWidth-1:0][NumIds-1:0] payload_ram_out_addr_rot90;
+  // Intermediate aggregation signal
+  logic [BankAddrWidth-1:0][NumIds-1:0] pyld_ram_in_addr_rot90;
+  logic [BankAddrWidth-1:0][NumIds-1:0] pyld_ram_out_addr_rot90;
   logic [BankAddrWidth-1:0][NumIds-1:0] meta_ram_in_addr_rot90;
   logic [BankAddrWidth-1:0][NumIds-1:0] meta_ram_out_addr_tail_rot90;
   logic [BankAddrWidth-1:0][NumIds-1:0] meta_ram_out_addr_rsp_head_rot90;
@@ -371,8 +522,8 @@ module simmem_resp_bank (
     for (
         genvar i_bit = 0; i_bit < BankAddrWidth; i_bit = i_bit + 1
     ) begin : rotate_ram_address_inner
-      assign payload_ram_in_addr_rot90[i_bit][i_id] = payload_ram_in_addr_id[i_id][i_bit];
-      assign payload_ram_out_addr_rot90[i_bit][i_id] = payload_ram_out_addr_id[i_id][i_bit];
+      assign pyld_ram_in_addr_rot90[i_bit][i_id] = pyld_ram_in_addr_id[i_id][i_bit];
+      assign pyld_ram_out_addr_rot90[i_bit][i_id] = pyld_ram_out_addr_id[i_id][i_bit];
       assign meta_ram_in_addr_rot90[i_bit][i_id] = meta_ram_in_addr_id[i_id][i_bit];
       assign meta_ram_out_addr_tail_rot90[i_bit][i_id] = meta_ram_out_addr_tail_id[i_id][i_bit];
       assign meta_ram_out_addr_rsp_head_rot90[i_bit][i_id] =
@@ -380,8 +531,8 @@ module simmem_resp_bank (
     end : rotate_ram_address_inner
   end : rotate_ram_address
   for (genvar i_bit = 0; i_bit < BankAddrWidth; i_bit = i_bit + 1) begin : aggregate_ram_address
-    assign payload_ram_in_addr[i_bit] = |payload_ram_in_addr_rot90[i_bit];
-    assign payload_ram_out_addr[i_bit] = |payload_ram_out_addr_rot90[i_bit];
+    assign pyld_ram_in_addr[i_bit] = |pyld_ram_in_addr_rot90[i_bit];
+    assign pyld_ram_out_addr[i_bit] = |pyld_ram_out_addr_rot90[i_bit];
     assign meta_ram_in_addr[i_bit] = |meta_ram_in_addr_rot90[i_bit];
     assign meta_ram_out_addr_tail[i_bit] = |meta_ram_out_addr_tail_rot90[i_bit];
     assign meta_ram_out_addr_rsp_head[i_bit] = |meta_ram_out_addr_rsp_head_rot90[i_bit];
@@ -398,17 +549,25 @@ module simmem_resp_bank (
   end : aggregate_meta_in
 
   // RAM write masks, filled with ones
-  assign payload_ram_in_wmask = {MsgRamWidth{1'b1}};
-  assign payload_ram_out_wmask = {MsgRamWidth{1'b1}};
   assign meta_ram_in_wmask = {BankAddrWidth{1'b1}};
   assign meta_ram_out_wmask = {BankAddrWidth{1'b1}};
 
+  // Payload RAM wmask extension
+  for (genvar i_bur = 0; i_bur < MaxBurstLen; i_bur = i_bur + 1) begin : expand_rsp_wmasks
+    for (
+        genvar i_bit = PayloadWidth * i_bur; i_bit < PayloadWidth * (i_bur + 1); i_bit = i_bit + 1
+    ) begin : expand_rsp_wmasks_inner
+      assign pyld_ram_in_wmask_expanded[i_bit] = pyld_ram_in_wmask[i_bur];
+      assign pyld_ram_out_wmask_expanded[i_bit] = pyld_ram_out_wmask_d[i_bur];
+    end : expand_rsp_wmasks_inner
+  end : expand_rsp_wmasks
+
   // RAM request signals The payload RAM input is triggered iff there is a successful data input
   // handshake
-  assign payload_ram_in_req = in_rsp_ready_o && in_rsp_valid_i;
+  assign pyld_ram_in_req = in_rsp_ready_o && in_rsp_valid_i;
 
   // The payload RAM output is triggered iff there is data to output at the next cycle
-  assign payload_ram_out_req = |nxt_id_to_release_onehot;
+  assign pyld_ram_out_req = |nxt_id_to_release_onehot;
 
   // Assign the queue_initiated signal, to compute whether the metadata RAM should be requested
   for (genvar i_id = 0; i_id < NumIds; i_id = i_id + 1) begin : req_meta_in_id_assignment
@@ -425,17 +584,38 @@ module simmem_resp_bank (
   // Metadata output is requested when there is output to be released (to potentially update the
   // corresponding pre_tails from RAM) or input data coming (to potentially update the corresponding
   // response head pointer from RAM). 
-  always_comb begin : meta_ram_out_req_assignment
+  always_comb begin
     meta_ram_out_req = 1'b0;
     for (int unsigned i_id = 0; i_id < NumIds; i_id = i_id + 1) begin
       meta_ram_out_req |= update_rsp_from_ram_d[i_id] | update_pt_from_ram_d[i_id];
     end
-  end : meta_ram_out_req_assignment
+  end
 
-  assign payload_ram_in_write = payload_ram_in_req;
-  assign payload_ram_out_write = 1'b0;
+  assign pyld_ram_in_write = pyld_ram_in_req;
+  assign pyld_ram_out_write = 1'b0;
   assign meta_ram_in_write = meta_ram_in_req;
   assign meta_ram_out_write = 1'b0;
+
+  // Response RAM input and output data selection
+  logic [MaxBurstLen-1:0][DataWidth-IDWidth-1:0] pyld_ram_in_burst_data;
+  logic [MaxBurstLen-1:0][DataWidth-IDWidth-1:0] pyld_ram_out_burst_data;
+  logic [DataWidth-IDWidth-1:0][MaxBurstLen-1:0] pyld_ram_out_burst_data_rot90;
+  logic [DataWidth-IDWidth-1:0] pyld_ram_out_data;
+
+
+  // Fill input with the input payload. The irrelevant input will be filtered out using the wmasks.
+  for (genvar i_bur = 0; i_bur < MaxBurstLen; i_bur = i_bur + 1) begin : gen_pyld_input
+    assign pyld_ram_in_burst_data[i_bur] = rsp_i.merged_payload.payload;
+  end : gen_pyld_input
+
+  // Output payload.
+  for (genvar i_bit = 0; i_bit < PayloadWidth; i_bit = i_bit + 1) begin : gen_out_data
+    for (genvar i_bur = 0; i_bur < MaxBurstLen; i_bur = i_bur + 1) begin : gen_out_rsp_inner
+      assign pyld_ram_out_burst_data_rot90[i_bit][i_bur] =
+          pyld_ram_out_burst_data[i_bur][i_bit] & pyld_ram_out_wmask_q[i_bur];
+    end : gen_out_rsp_inner
+    assign pyld_ram_out_data[i_bit] = |pyld_ram_out_burst_data_rot90[i_bit];
+  end : gen_out_data
 
 
   ////////////////////////////////////
@@ -447,12 +627,13 @@ module simmem_resp_bank (
   //  Involved signals are, in order of dependency:
   //    * nxt_addr_mhot_id: Next addresses to release, multihot and by AXI identifier. Depend on the
   //      input from delay bank and from the response length after output.
-  //    * nxt_addr_onehot_id: Next address to release, onehot and by AXI identifier.
+  //    * nxt_addr_onehot_id:  Next address to release, onehot and by AXI identifier.
   //    * nxt_id_mhot: Next address to release, multihot.
   //    * nxt_id_mhot: Result signal, indicating in a one-hot fashion, which AXI identifier to
   //      release next. Can be full zero.
   //    * nxt_addr_onehot_rot: Next address to release, one-hot, rotated and filtered by next id to
   //      release. Useful for output calculation below.
+
 
   logic [NumIds-1:0][TotCapa-1:0] nxt_addr_mhot_id;
   logic [TotCapa-1:0][NumIds-1:0] nxt_addr_onehot_rot;
@@ -465,19 +646,20 @@ module simmem_resp_bank (
 
     // Calculation of the next address to release
     for (genvar i_addr = 0; i_addr < TotCapa; i_addr = i_addr + 1) begin : gen_next_addr
-      always_comb begin : nxt_addr_mhot_assignment
+      always_comb begin
         // Fundamentally, the next address to release needs to belong to a non-empty AXI identifier
         // and must be enabled for release
         nxt_addr_mhot_id[i_id][i_addr] = |(rsp_len_after_out[i_id]) && release_en_i[i_addr];
 
-        // The address must additionally be, depending on the situation, the pre_tail or the tail of
-        // the corresponding queue
-        if (out_rsp_ready_i && out_rsp_valid_o && cur_out_id_onehot[i_id]) begin
+        // The address must additionally be, depending on the situation, the pre_tail or the tail of the
+        // corresponding queue
+        if (out_rsp_ready_i && out_rsp_valid_o && cur_out_id_onehot[i_id] && tail_cnt_id[i_id] == 1
+            ) begin
           nxt_addr_mhot_id[i_id][i_addr] &= pre_tails[i_id] == i_addr;
         end else begin
           nxt_addr_mhot_id[i_id][i_addr] &= tails[i_id] == i_addr;
         end
-      end : nxt_addr_mhot_assignment
+      end
 
       // Derive onehot from multihot signal
       if (i_addr == 0) begin
@@ -510,7 +692,7 @@ module simmem_resp_bank (
   // Input is ready if there is room and data is not flowing out
   assign in_rsp_ready_o =
       in_rsp_valid_i && |is_id_rsvd;  // AXI 4 allows ready to depend on the valid signal
-  assign rsv_ready_o = |(~ram_v_q);
+  assign rsv_ready_o = |(~ram_v);
 
 
   /////////////
@@ -549,19 +731,19 @@ module simmem_resp_bank (
   // Transform next id to release to binary representation for more compact storage
   logic [IDWidth-1:0] nxt_id_to_release_bin;
 
-  always_comb begin : get_nxt_id_to_release_bin_from_onehot
+  always_comb begin
     nxt_id_to_release_bin = '0;
     for (int unsigned i_id = 0; i_id < NumIds; i_id = i_id + 1) begin
       if (nxt_id_to_release_onehot[i_id]) begin
         nxt_id_to_release_bin = i_id[IDWidth - 1:0];
       end
     end
-  end : get_nxt_id_to_release_bin_from_onehot
+  end
 
   // Calculate the length of each AXI identifier queue after the potential output
   for (genvar i_id = 0; i_id < NumIds; i_id = i_id + 1) begin : gen_len_after_output
-    assign rsp_len_after_out[i_id] = out_rsp_valid_o && out_rsp_ready_i && cur_out_id_onehot[i_id] ?
-        rsp_len_q[i_id] - 1 : rsp_len_q[i_id];
+    assign rsp_len_after_out[i_id] = out_rsp_valid_o && out_rsp_ready_i &&
+        cur_out_id_onehot[i_id] && tail_cnt_id[i_id] == 1 ? rsp_len_q[i_id] - 1 : rsp_len_q[i_id];
   end : gen_len_after_output
 
   // Recall if the current output is valid
@@ -570,8 +752,7 @@ module simmem_resp_bank (
   assign cur_out_id_bin_d = nxt_id_to_release_bin;
   assign out_rsp_valid_o = |cur_out_valid_q;
   assign rsp_o.merged_payload.id = cur_out_id_bin_q;
-  assign rsp_o.merged_payload.payload = payload_ram_out_data;
-
+  assign rsp_o.merged_payload.payload = pyld_ram_out_data;
 
   ////////////////
   // Handshakes //
@@ -616,8 +797,10 @@ module simmem_resp_bank (
       pgbk_pt_with_rsv[i_id] = 1'b0;
       pgbk_pt_with_rsp_d[i_id] = 1'b0;
 
-      payload_ram_in_addr_id[i_id] = '0;
-      payload_ram_out_addr_id[i_id] = '0;
+      pyld_ram_in_addr_id[i_id] = '0;
+      pyld_ram_out_addr_id[i_id] = '0;
+      pyld_ram_in_wmask_id[i_id] = '0;
+      pyld_ram_out_wmask_id[i_id] = '0;
       meta_ram_in_addr_id[i_id] = '0;
       meta_ram_out_addr_tail_id[i_id] = '0;
       meta_ram_out_addr_rsp_head_id[i_id] = '0;
@@ -625,67 +808,95 @@ module simmem_resp_bank (
       meta_ram_in_content_id[i_id] = '0;
 
       // Output preparation
-      if (nxt_id_to_release_onehot[i_id]) begin : out_preparation_handshake
+      if (nxt_id_to_release_onehot[i_id]) begin
         // The pre_tail points not to the current output to provide, but to the next. If we
         // currently provide output (handshake), make sure to be ready in the next cycle. The RAM
         // has a read latency of one clock cycle.
         if (out_rsp_valid_o && out_rsp_ready_i && cur_out_id_onehot[i_id]) begin
-          payload_ram_out_addr_id[i_id] = pre_tails[i_id];
+          if (tail_cnt_id[i_id] == 1) begin
+            pyld_ram_out_addr_id[i_id] = pre_tails[i_id];
+            // Set the corresponding payload RAM output wmask bit to one.
+            for (int unsigned i_bur = 0; i_bur < MaxBurstLen; i_bur = i_bur + 1) begin
+              pyld_ram_out_wmask_id[i_id][i_bur] = pre_tail_cnt_id[i_id] ==
+                  MaxBurstLen[BurstLenWidth - 1:0] - i_bur[BurstLenWidth - 1:0];
+            end
+          end else begin
+            pyld_ram_out_addr_id[i_id] = tails[i_id];
+            // Set the corresponding payload RAM output wmask bit to one.
+            for (int unsigned i_bur = 0; i_bur < MaxBurstLen; i_bur = i_bur + 1) begin
+              pyld_ram_out_wmask_id[i_id][i_bur] = tail_cnt_id[i_id] ==
+                  MaxBurstLen[BurstLenWidth - 1:0] - i_bur[BurstLenWidth - 1:0] + 1;
+            end
+          end
         end else begin
-          payload_ram_out_addr_id[i_id] = tails[i_id];
+          pyld_ram_out_addr_id[i_id] = tails[i_id];
+          // Set the corresponding payload RAM output wmask bit to one.
+          for (int unsigned i_bur = 0; i_bur < MaxBurstLen; i_bur = i_bur + 1) begin
+            pyld_ram_out_wmask_id[i_id][i_bur] =
+                tail_cnt_id[i_id] == MaxBurstLen[BurstLenWidth - 1:0] - i_bur[BurstLenWidth - 1:0];
+          end
         end
       end
 
       // Input handshake
-      if (in_rsp_ready_o && in_rsp_valid_i && rsp_i.merged_payload.id == i_id) begin : in_handshake
+      if (in_rsp_ready_o && in_rsp_valid_i && rsp_i.merged_payload.id == i_id) begin
 
-        rsp_len_d[i_id] = rsp_len_d[i_id] + 1;
+        // If this is the last data of the burst, then update the pointers
+        if (rsv_cnt_id[i_id] == 1) begin
 
-        // As the reservation length refers to the number of reserved cells that are not occupied,
-        // it must be decremented on response input.
-        rsv_len_d[i_id] = rsv_len_d[i_id] - 1;
+          rsp_len_d[i_id] = rsp_len_d[i_id] + 1;
 
-        if (rsp_heads[i_id] != rsv_heads_q[i_id]) begin
-          // If the reservation head is ahead of the response head, then the rsp_head can follow the
-          // pointer from the metadata RAM.
-          update_rsp_from_ram_d[i_id] = 1'b1;
-        end else begin
-          // Else, rsp_head needs to be updated by piggybacking with rsv_head, as this is the only
-          // way to satisfy the placement condition for the response head: (a) the response head
-          // must be either on the next reserved cell ready to take a response, or (b) if there is
-          // no such cell, then it should be equal to the rsp_head. Therefore, here, if the
-          // reservation head gets updated in the current clock cycle, then the response head
-          // follows it and (a) is respected. Else, both pointers keep their (equal) position and
-          // (b) is respected. Note that in the latter case, the linked list for this AXI identifier
-          // is now full and will not take any new response before a new reservation has been
-          // performed.
-          pgbk_rsp_with_rsv[i_id] = 1'b1;
-        end
+          // As the reservation length refers to the number of reserved cells that are not occupied,
+          // it must be decremented on response input.
+          rsv_len_d[i_id] = rsv_len_d[i_id] - 1;
 
-        // Pull the pre_tail with the response head in the case where the pre-tail could not be
-        // placed on the second-to-last occupied address of the queue because there was at most one
-        // response element in the queue.
-        if (pre_tails[i_id] == rsp_heads[i_id] && (
-            rsp_len_after_out[i_id] == 0 || (
-                rsp_len_after_out[i_id] == 1 && tails[i_id] == pre_tails[i_id]))) begin
-          pgbk_pt_with_rsp_d[i_id] = 1'b1;
+          if (rsp_heads[i_id] != rsv_heads_q[i_id]) begin
+            // If the reservation head is ahead of the response head, then the rsp_head can follow
+            // the pointer from the metadata RAM.
+            update_rsp_from_ram_d[i_id] = 1'b1;
+          end else begin
+            // Else, rsp_head needs to be updated by piggybacking with rsv_head, as this is the only
+            // way to satisfy the placement condition for the response head: (a) the response head
+            // must be either on the next reserved cell ready to take a response, or (b) if there is
+            // no such cell, then it should be equal to the rsp_head. Therefore, here, if the
+            // reservation head gets updated in the current clock cycle, then the response head
+            // follows it and (a) is respected. Else, both pointers keep their (equal) position and
+            // (b) is respected. Note that in the latter case, the linked list for this AXI
+            // identifier is now full and will not take any new response before a new reservation
+            // has been performed.
+            pgbk_rsp_with_rsv[i_id] = 1'b1;
+          end
+
+          // Pull the pre_tail with the response head in the case where the pre-tail could not be
+          // placed on the second-to-last occupied address of the queue because there was at most
+          // one response element in the queue.
+          if (pre_tails[i_id] == rsp_heads[i_id] && (
+              rsp_len_after_out[i_id] == 0 || (
+                  rsp_len_after_out[i_id] == 1 && tails[i_id] == pre_tails[i_id]))) begin
+            pgbk_pt_with_rsp_d[i_id] = 1'b1;
+          end
         end
 
         // Store the data
-        payload_ram_in_addr_id[i_id] = rsp_heads[i_id];
+        pyld_ram_in_addr_id[i_id] = rsp_heads[i_id];
 
         // Update the response head pointer position
         meta_ram_out_addr_rsp_head_id[i_id] = rsp_heads[i_id];
+
+        // Set the payload RAM input wmask
+        for (int unsigned i_bur = 0; i_bur < MaxBurstLen; i_bur = i_bur + 1) begin
+          pyld_ram_in_wmask_id[i_id][i_bur] = rsp_cnt_id[i_id] == i_bur[BurstLenWidth - 1:0];
+        end
       end
 
       // Reservation handshake
-      if (rsv_valid_i && rsv_ready_o && rsv_req_id_onehot_i[i_id]) begin : reservation_handshake
+      if (rsv_valid_i && rsv_ready_o && rsv_req_id_onehot_i[i_id]) begin
 
         rsv_len_d[i_id] = rsv_len_d[i_id] + 1;
         update_rsv_heads[i_id] = 1'b1;
 
         // If the queue is already initiated, then update the head position in the RAM.
-        if (|rsv_len_q[i_id] || |rsp_len_after_out[i_id]) begin : reservation_initiated_queue
+        if (|rsv_len_q[i_id] || |rsp_len_after_out[i_id]) begin
           meta_ram_in_addr_id[i_id] = rsv_heads_q[i_id];
           meta_ram_in_content_id[i_id].nxt_elem = nxt_free_addr;
 
@@ -713,28 +924,33 @@ module simmem_resp_bank (
           pgbk_pt_with_rsv[i_id] = 1'b1;
           is_rsp_head_emptybox_d[i_id] = 1'b1;
         end
-      end : reservation_handshake
+      end
 
       // Output handshake
-      if (out_rsp_valid_o && out_rsp_ready_i && cur_out_id_onehot[i_id]) begin : ouptut_handshake
-        rsp_len_d[i_id] = rsp_len_d[i_id] - 1;
-        // Update the tail to take the current value of the pre_tail.
-        update_t_from_pt[i_id] = 1'b1;
+      if (out_rsp_valid_o && out_rsp_ready_i && cur_out_id_onehot[i_id]) begin
 
-        if (rsp_heads[i_id] != pre_tails[i_id]) begin
-          // If the response head is not at the same address as the pre_tail, then the pre_tail can
-          //  be safely updated from the RAM without risking to overtake the response pointer. 
-          update_pt_from_ram_d[i_id] = 1'b1;
-          meta_ram_out_addr_tail_id[i_id] = pre_tails[i_id];
-        end else begin
-          // If the pre_tail points to the same value as the rsp_head, then to respect the pointer
-          // ordering (precisely here, pre_tail <= rsp_head in the order defined by the linked
-          // list), the pre_tail must be updated only if the response head is updated
-          // (piggybacking). This also covers the case  "pre_tail == rsp_head == rsv_head AND
-          // current reservation handshake is taking place".
-          pgbk_pt_with_rsp_d[i_id] = 1'b1;
+        // If this is the last response in the burst, then update the pointers.
+        if (tail_cnt_id[i_id] == 1) begin
+
+          rsp_len_d[i_id] = rsp_len_d[i_id] - 1;
+          // Update the tail to take the current value of the pre_tail.
+          update_t_from_pt[i_id] = 1'b1;
+
+          if (rsp_heads[i_id] != pre_tails[i_id]) begin
+            // If the response head is not at the same address as the pre_tail, then the pre_tail
+            //  can be safely updated from the RAM without risking to overtake the response pointer.
+            update_pt_from_ram_d[i_id] = 1'b1;
+            meta_ram_out_addr_tail_id[i_id] = pre_tails[i_id];
+          end else begin
+            // If the pre_tail points to the same value as the rsp_head, then to respect the pointer
+            // ordering (precisely here, pre_tail <= rsp_head in the order defined by the linked
+            // list), the pre_tail must be updated only if the response head is updated
+            // (piggybacking). This also covers the case  "pre_tail == rsp_head == rsv_head AND
+            // current reservation handshake is taking place".
+            pgbk_pt_with_rsp_d[i_id] = 1'b1;
+          end
         end
-      end : ouptut_handshake
+      end
     end
   end
 
@@ -747,11 +963,14 @@ module simmem_resp_bank (
       rsp_len_q <= '{default: '0};
       rsv_len_q <= '{default: '0};
 
-      update_t_from_ram_q <= '{default: '0};
+      rsv_cnt_q <= '{default: '0};
+      rsp_cnt_q <= '{default: '0};
+
+      update_pt_from_ram_q <= '{default: '0};
       update_rsp_from_ram_q <= '{default: '0};
+      pyld_ram_out_wmask_q <= '{default: '0};
 
       is_rsp_head_emptybox_q <= '{default: '1};
-
       pgbk_t_with_rsp_q <= '{default: '0};
       pgbk_pt_with_rsp_q <= '{default: '0};
     end else begin
@@ -762,11 +981,14 @@ module simmem_resp_bank (
       rsp_len_q <= rsp_len_d;
       rsv_len_q <= rsv_len_d;
 
-      update_t_from_ram_q <= update_pt_from_ram_d;
+      rsv_cnt_q <= rsv_cnt_d;
+      rsp_cnt_q <= rsp_cnt_d;
+
+      update_pt_from_ram_q <= update_pt_from_ram_d;
       update_rsp_from_ram_q <= update_rsp_from_ram_d;
+      pyld_ram_out_wmask_q <= pyld_ram_out_wmask_d;
 
       is_rsp_head_emptybox_q <= is_rsp_head_emptybox_d;
-
       pgbk_t_with_rsp_q <= pgbk_t_with_rsp_d;
       pgbk_pt_with_rsp_q <= pgbk_pt_with_rsp_d;
     end
@@ -784,36 +1006,28 @@ module simmem_resp_bank (
     end
   end
 
-  always_ff @(posedge clk_i or negedge rst_ni) begin
-    if (!rst_ni) begin
-      ram_v_q <= '0;
-    end else begin
-      ram_v_q <= ram_v_d;
-    end
-  end
-
   // Payload RAM instance
   prim_generic_ram_2p #(
-    .Width(MsgRamWidth),
-    .DataBitsPerMask(1),
+    .Width(PayloadRamWidth),
+    .DataBitsPerMask(PayloadWidth),
     .Depth(TotCapa)
   ) i_payload_ram (
     .clk_a_i     (clk_i),
     .clk_b_i     (clk_i),
-    
-    .a_req_i     (payload_ram_in_req),
-    .a_write_i   (payload_ram_in_write),
-    .a_wmask_i   (payload_ram_in_wmask),
-    .a_addr_i    (payload_ram_in_addr),
-    .a_wdata_i   (rsp_i.merged_payload.payload),
+
+    .a_req_i     (pyld_ram_in_req),
+    .a_write_i   (pyld_ram_in_write),
+    .a_wmask_i   (pyld_ram_in_wmask_expanded),
+    .a_addr_i    (pyld_ram_in_addr),
+    .a_wdata_i   (pyld_ram_in_burst_data),
     .a_rdata_o   (),
-    
-    .b_req_i     (payload_ram_out_req),
-    .b_write_i   (payload_ram_out_write),
-    .b_wmask_i   (payload_ram_out_wmask),
-    .b_addr_i    (payload_ram_out_addr),
+
+    .b_req_i     (pyld_ram_out_req),
+    .b_write_i   (pyld_ram_out_write),
+    .b_wmask_i   (pyld_ram_out_wmask_expanded),
+    .b_addr_i    (pyld_ram_out_addr),
     .b_wdata_i   (),
-    .b_rdata_o   (payload_ram_out_data)
+    .b_rdata_o   (pyld_ram_out_burst_data)
   );
 
   // Metadata RAM instance
@@ -824,14 +1038,14 @@ module simmem_resp_bank (
   ) i_meta_ram_out_tail (
     .clk_a_i     (clk_i),
     .clk_b_i     (clk_i),
-    
+
     .a_req_i     (meta_ram_in_req),
     .a_write_i   (meta_ram_in_write),
     .a_wmask_i   (meta_ram_in_wmask),
     .a_addr_i    (meta_ram_in_addr),
     .a_wdata_i   (meta_ram_in_content),
     .a_rdata_o   (),
-    
+
     .b_req_i     (meta_ram_out_req),
     .b_write_i   (meta_ram_out_write),
     .b_wmask_i   (meta_ram_out_wmask),
@@ -848,14 +1062,14 @@ module simmem_resp_bank (
   ) i_meta_ram_out_rsp_head (
     .clk_a_i     (clk_i),
     .clk_b_i     (clk_i),
-    
+
     .a_req_i     (meta_ram_in_req),
     .a_write_i   (meta_ram_in_write),
     .a_wmask_i   (meta_ram_in_wmask),
     .a_addr_i    (meta_ram_in_addr),
     .a_wdata_i   (meta_ram_in_content),
     .a_rdata_o   (),
-    
+
     .b_req_i     (meta_ram_out_req),
     .b_write_i   (meta_ram_out_write),
     .b_wmask_i   (meta_ram_out_wmask),
