@@ -6,26 +6,52 @@ name: "::simmem:0.1"
 description: "Simulated memory controller"
 
 filesets:
-  files_rtl_resp_bank:
+  files_rtl_rsp_bank:
     depend:
       - lowrisc:prim_generic:ram_2p
     files:
       - rtl/simmem_pkg.sv
-      - rtl/simmem_resp_bank.sv
+      - rtl/simmem_rsp_bank.sv
     file_type: systemVerilogSource
 
-  files_dv_resp_bank:
+  files_dv_rsp_bank:
     files:
-      - dv/simmem_resp_bank/cpp/simmem_resp_bank_tb.cc
+      - dv/simmem_rsp_bank/cpp/simmem_rsp_bank_tb.cc
     file_type: cppSource
 
+  files_rtl_simmem_top:
+    depend:
+      - lowrisc:prim_generic:ram_2p
+    files:
+      - rtl/simmem_pkg.sv
+      - rtl/simmem_delay_calculator_core.sv
+      - rtl/simmem_delay_calculator.sv
+      - rtl/simmem_rsp_bank.sv
+      - rtl/simmem_rsp_banks.sv
+      - rtl/simmem_top.sv
+    file_type: systemVerilogSource
+
+  files_dv_simmem_top:
+    files:
+      - dv/simmem_top/cpp/simmem_axi_dimensions.h : {is_include_file: true}
+      - dv/simmem_top/cpp/simmem_axi_structures.h : {is_include_file: true}
+      - dv/simmem_top/cpp/simmem_axi_structures.cc
+      - dv/simmem_top/cpp/simmem_top_tb.cc
+    file_type: cppSource
+
+  files_simmem_top_waiver:
+    files:
+      - lint/simmem_delay_calculator_core_waiver.vlt
+      - lint/simmem_top_waiver.vlt
+    file_type: vlt
+
 targets:
-  sim_resp_bank:
+  sim_rsp_bank:
     default_tool: verilator
     filesets:
-      - files_rtl_resp_bank
-      - files_dv_resp_bank
-    toplevel: simmem_resp_bank
+      - files_rtl_rsp_bank
+      - files_dv_rsp_bank
+    toplevel: simmem_rsp_bank
     tools:
       verilator:
         mode: cc
@@ -35,7 +61,29 @@ targets:
           - '--trace-structs'
           - '--trace-params'
           - '--trace-max-array 1024'
-          - '-CFLAGS "-std=c++11 -Wall -DVM_TRACE_FMT_FST -DTOPLEVEL_NAME=simmem_resp_bank_tb -g -O0"'
+          - '-CFLAGS "-std=c++11 -Wall -DVM_TRACE_FMT_FST -DTOPLEVEL_NAME=simmem_rsp_bank_tb -g -O0"'
+          - '-LDFLAGS "-pthread -lutil"'
+          - "-Wall"
+          - "-Wno-PINCONNECTEMPTY"
+          - "-Wno-fatal"
+
+  sim_simmem_top:
+    default_tool: verilator
+    filesets:
+      - files_simmem_top_waiver
+      - files_rtl_simmem_top
+      - files_dv_simmem_top
+    toplevel: simmem_top
+    tools:
+      verilator:
+        mode: cc
+        verilator_options:
+          - '--trace'
+          - '--trace-fst' # this requires -DVM_TRACE_FMT_FST in CFLAGS below!
+          - '--trace-structs'
+          - '--trace-params'
+          - '--trace-max-array 1024'
+          - '-CFLAGS "-std=c++11 -Wall -DVM_TRACE_FMT_FST -DTOPLEVEL_NAME=simmem_top_tb -g -O0"'
           - '-LDFLAGS "-pthread -lutil"'
           - "-Wall"
           - "-Wno-PINCONNECTEMPTY"
