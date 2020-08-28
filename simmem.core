@@ -7,10 +7,9 @@ description: "Simulated memory controller"
 
 filesets:
   files_rtl_rsp_bank:
-    depend:
-      - lowrisc:prim_generic:ram_2p
     files:
       - rtl/simmem_pkg.sv
+      - rtl/prim_generic_ram_2p.sv
       - rtl/simmem_rsp_bank.sv
     file_type: systemVerilogSource
 
@@ -20,12 +19,11 @@ filesets:
     file_type: cppSource
 
   files_rtl_simmem_top:
-    depend:
-      - lowrisc:prim_generic:ram_2p
     files:
       - rtl/simmem_pkg.sv
       - rtl/simmem_delay_calculator_core.sv
       - rtl/simmem_delay_calculator.sv
+      - rtl/prim_generic_ram_2p.sv
       - rtl/simmem_rsp_bank.sv
       - rtl/simmem_rsp_banks.sv
       - rtl/simmem_top.sv
