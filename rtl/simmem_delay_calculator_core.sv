@@ -806,7 +806,7 @@ module simmem_delay_calculator_core #(
           // write data to come in. The rest of the data_v bits (between the two possibly empty
           // ranges of ones) are set to zero, awaiting further write data requests.
           wslt_d[i_slt].data_v[i_bit] =
-              (i_bit >= get_effective_burst_len(AxLenWidth'(waddr_i.burst_len))) || (i_bit < get_effective_burst_len(AxLenWidth'(wdata_immediate_cnt_i)));
+              (i_bit >= get_effective_burst_len(AxLenWidth'(waddr_i.burst_len))) || (i_bit < AxLenWidth'(wdata_immediate_cnt_i));
           // The age matrix has to be updated for each immediate write data, with the same age
           // relative to the entries external to the slot.
           main_new_entry[i_slt * MaxBurstEffLen+i_bit] = i_bit < wdata_immediate_cnt_i;
@@ -931,7 +931,7 @@ module simmem_delay_calculator_core #(
         for (int unsigned i_slt = 0; i_slt < NumWSlots; i_slt = i_slt + 1) begin
           for (int unsigned i_bit = 0; i_bit < MaxBurstEffLen; i_bit = i_bit + 1) begin
             // Mark memory operation done if already done, or was pending.
-            wslt_d[i_slt].mem_done[i_bit] = wslt_q[i_slt].mem_done[i_bit] |
+            wslt_d[i_slt].mem_done[i_bit] = wslt_d[i_slt].mem_done[i_bit] |
                 (wslt_q[i_slt].mem_pending[i_bit] &
                 (get_assigned_rk_id(slt_waddrs[i_slt][i_bit])==NumRksW'(i_rk)));
             // Unset the potential corresponding memory pending bit.
@@ -942,7 +942,7 @@ module simmem_delay_calculator_core #(
         for (int unsigned i_slt = 0; i_slt < NumRSlots; i_slt = i_slt + 1) begin
           for (int unsigned i_bit = 0; i_bit < MaxBurstEffLen; i_bit = i_bit + 1) begin
             // Mark memory operation done if already done, or was pending.
-            rslt_d[i_slt].mem_done[i_bit] = rslt_q[i_slt].mem_done[i_bit] |
+            rslt_d[i_slt].mem_done[i_bit] = rslt_d[i_slt].mem_done[i_bit] |
                 (rslt_q[i_slt].mem_pending[i_bit] &
                 (get_assigned_rk_id(slt_raddrs[i_slt][i_bit])==NumRksW'(i_rk)));
             // Unset the potential corresponding memory pending bit.

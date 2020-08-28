@@ -450,7 +450,7 @@ class RealMemoryController {
       new_rdata.id = raddr.id;
       new_rdata.data = raddr.addr + i;
       new_rdata.rsp = 0;  // "OK" response
-      new_rdata.last = i == raddr.burst_len - 1;
+      new_rdata.last = i == raddr.burst_len;
       rdata_out_queues[raddr.id].push(new_rdata);
     }
   }
