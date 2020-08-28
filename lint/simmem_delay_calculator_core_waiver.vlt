@@ -1,0 +1,21 @@
+// Copyright lowRISC contributors.
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
+// SPDX-License-Identifier: Apache-2.0
+
+// Lint waivers for Verilator
+// See https://www.veripool.org/projects/verilator/wiki/Manual-verilator#CONFIGURATION-FILES
+// for documentation.
+//
+// Important: This file must included *before* any other Verilog file is read.
+// Otherwise, only global waivers are applied, but not file-specific waivers.
+
+`verilator_config
+lint_off -rule UNUSED -file "*/rtl/simmem_delay_calculator_core.sv" -match "*'waddr_i'*"
+lint_off -rule UNUSED -file "*/rtl/simmem_delay_calculator_core.sv" -match "*'raddr_i'*"
+lint_off -rule UNUSED -file "*/rtl/simmem_delay_calculator_core.sv" -match "*'address'*"
+
+lint_off -rule UNOPTFLAT -file "*/rtl/simmem_delay_calculator_core.sv" -match "*main_age_matrix*"
+lint_off -rule UNOPTFLAT -file "*/rtl/simmem_delay_calculator_core.sv" -match "*wslt_age_matrix*"
+
+lint_off -rule UNOPTFLAT -file "*/rtl/simmem_delay_calculator_core.sv" -match "*'slt_waddr_lsbs'*"
+lint_off -rule UNOPTFLAT -file "*/rtl/simmem_delay_calculator_core.sv" -match "*'slt_raddr_lsbs'*"
