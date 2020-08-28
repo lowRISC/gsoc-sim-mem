@@ -25,9 +25,8 @@ Two testbenches are integrated in the repository:
 
 See the [documentation](https://github.com/lowrisc/gsoc-sim-mem/documentation.md) for more information about the testbenches.
 
-The required tools are [Verilator](https://www.veripool.org/wiki/verilator) and [FuseSoC](https://github.com/olofk/fusesoc). Additionally, [GTKWave](http://gtkwave.sourceforge.net/) is used for analyzing waveforms.
-
-Additionally, the project depends on the `lowrisc:prim_generic:ram_2p` core to generate the BRAMs.
+The required tools are [Verilator](https://www.veripool.org/wiki/verilator) and [FuseSoC](https://github.com/olofk/fusesoc).
+Additionally, [GTKWave](http://gtkwave.sourceforge.net/) is used for analyzing waveforms.
 
 ### Initial setup
 
@@ -40,27 +39,10 @@ git clone https://github.com/lowRISC/gsoc-sim-mem.git simmem
 cd simmem
 ```
 
-**Step 2:** Clone the opentitan repository locally.
-
-**Step 3:** Manage the `lowrisc:prim_generic:ram_2p` core dependency with FuseSoC:
-Make sure to be located at the root of the local simmem repository, then execute:
+**Step 2:** Initialize FuseSoC and add the simmem core:
 
 ```bash
 fusesoc init
-fusesoc library add opentitan $PATH_TO_OPENTITAN
-```
-
-Where `$PATH_TO_OPENTITAN` is the path to the local cloned OpenTitan repository. To verify that the operation succeeded, execute:
-
-```bash
-fusesoc list-cores | grep lowrisc:prim_generic:ram_2p
-```
-
-It should now find a matching line.
-
-**Step 4:** Add the simmem core:
-
-```bash
 fusesoc library add simmem .
 ```
 
