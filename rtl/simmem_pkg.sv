@@ -23,7 +23,7 @@ package simmem_pkg;
   parameter int unsigned GlobalMemCapaW = 19; // Width
   parameter int unsigned GlobalMemCapa = 1 << GlobalMemCapaW;  // Bytes.
 
-  // The log2 of the width of a bank row.
+  // The log2 of the bank row length.
   parameter int unsigned RowBufLenW = 10;
   // The number of MSBs that uniquely define a bank row in an address.
   parameter int unsigned RowIdWidth = GlobalMemCapaW - RowBufLenW;

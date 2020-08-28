@@ -10,8 +10,8 @@
 
 #include <stdint.h>
 
-// The capacity of the global memory.
-const uint64_t GlobalMemCapaW = 19;  // bits
+// The width of the main memory capacity.
+const uint64_t GlobalMemCapaW = 19;  // Width
 
 /////////////////
 // AXI signals //
@@ -35,8 +35,9 @@ const uint64_t ArUserWidth = 0;
 
 // Data & response field widths
 const uint64_t XLastWidth = 1;
-// XReespWidth should be increased to 10 when testing, to have wider patterns to
-// compare.
+// XReespWidth may be increased to 10 when testing, to have wider patterns to
+// compare. This modification has to be performed in rtl/simmem_pkg
+// simultaneously.
 const uint64_t XRespWidth = 3;
 const uint64_t WUserWidth = 0;
 const uint64_t RUserWidth = 0;
