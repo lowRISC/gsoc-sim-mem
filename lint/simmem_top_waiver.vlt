@@ -1,0 +1,15 @@
+// Copyright lowRISC contributors.
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
+// SPDX-License-Identifier: Apache-2.0
+
+// Lint waivers for Verilator
+// See https://www.veripool.org/projects/verilator/wiki/Manual-verilator#CONFIGURATION-FILES
+// for documentation.
+//
+// Important: This file must included *before* any other Verilog file is read.
+// Otherwise, only global waivers are applied, but not file-specific waivers.
+
+`verilator_config
+lint_off -rule UNUSED -file "*/rtl/simmem_top.sv" -match "*'wdata_i'*"
+lint_off -rule UNUSED -file "*/rtl/simmem_top.sv" -match "*'waddr_ready_out_delay_calc'*"
+lint_off -rule UNUSED -file "*/rtl/simmem_top.sv" -match "*'raddr_ready_out_delay_calc'*"
