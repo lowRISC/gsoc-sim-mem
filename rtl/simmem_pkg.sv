@@ -86,9 +86,9 @@ package simmem_pkg;
   parameter int unsigned AxLenWidth = 8;
   parameter int unsigned AxSizeWidth = 3;
   parameter int unsigned AxBurstWidth = 2;
-  parameter int unsigned AxLockWidth = 2;
+  parameter int unsigned AxLockWidth = 1;
   parameter int unsigned AxCacheWidth = 4;
-  parameter int unsigned AxProtWidth = 4;
+  parameter int unsigned AxProtWidth = 3;
   parameter int unsigned AxQoSWidth = 4;
   parameter int unsigned AxRegionWidth = 4;
   parameter int unsigned AwUserWidth = 0;
@@ -154,15 +154,15 @@ package simmem_pkg;
     // logic [WUserWidth-1:0] user_signal;
     logic [XLastWidth-1:0] last;
     logic [WStrbWidth-1:0] strobes;
-    logic [MaxBurstEffSizeBytes-1:0] data;
+    logic [MaxBurstEffSizeBits-1:0] data;
   // logic [IDWidth-1:0] id; AXI4 does not allocate identifiers in write data messages
   } wdata_t;
 
   typedef struct packed {
     // logic [RUserWidth-1:0] user_signal;
     logic [XLastWidth-1:0] last;
-    logic [WStrbWidth-1:0] response;
-    logic [MaxBurstEffSizeBytes-1:0] data;
+    logic [XRespWidth-1:0] response;
+    logic [MaxBurstEffSizeBits-1:0] data;
     logic [IDWidth-1:0] id;
   } rdata_all_fields_t;
 

@@ -30,12 +30,12 @@ const uint64_t ReadAddress::region_w = AxQoSWidth;
 const uint64_t WriteResponse::id_w = IDWidth;
 const uint64_t WriteResponse::rsp_w = XRespWidth;
 
-const uint64_t WriteData::data_w = MaxBurstEffSizeBytes;
+const uint64_t WriteData::data_w = MaxBurstEffSizeBits;
 const uint64_t WriteData::strb_w = WStrbWidth;
 const uint64_t WriteData::last_w = XLastWidth;
 
 const uint64_t ReadData::id_w = IDWidth;
-const uint64_t ReadData::data_w = MaxBurstEffSizeBytes;
+const uint64_t ReadData::data_w = MaxBurstEffSizeBits;
 const uint64_t ReadData::rsp_w = XRespWidth;
 const uint64_t ReadData::last_w = XLastWidth;
 

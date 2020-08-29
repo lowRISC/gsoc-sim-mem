@@ -663,16 +663,12 @@ module simmem_delay_calculator_core #(
   for (genvar i_slt = 0; i_slt < NumWSlots; i_slt = i_slt + 1) begin : gen_waddrs_perslt
     for (genvar i_bit = 0; i_bit < MaxBurstEffLen; i_bit = i_bit + 1) begin : gen_waddrs
       if (i_bit == 0) begin
-        assign slt_waddr_lsbs[i_slt][0] = wslt_q[i_slt].addr[BurstAddrLSBs-1:0];
+        assign slt_waddr_lsbs[i_slt][0] = BurstAddrLSBs'(wslt_q[i_slt].addr);
       end else begin
-        always_comb begin
-          if (wslt_q[i_slt].burst_fixed) begin
-            assign slt_waddr_lsbs[i_slt][i_bit] = wslt_q[i_slt].addr[BurstAddrLSBs-1:0];
-          end else begin
-            assign slt_waddr_lsbs[i_slt][i_bit] = BurstAddrLSBs'(slt_waddr_lsbs[i_slt][i_bit - 1] +
-                BurstAddrLSBs'(get_effective_burst_size(AxSizeWidth'(wslt_q[i_slt].burst_size))));
-          end
-        end
+        assign slt_waddr_lsbs[i_slt][i_bit] =
+            wslt_q[i_slt].burst_fixed ? BurstAddrLSBs'(wslt_q[i_slt].addr) :
+            BurstAddrLSBs'(slt_waddr_lsbs[i_slt][i_bit - 1] +
+            BurstAddrLSBs'(get_effective_burst_size(AxSizeWidth'(wslt_q[i_slt].burst_size))));
       end
 
       // Concatenate the MSBs of the base address with the LSBs of each entry to form the whole
@@ -688,13 +684,13 @@ module simmem_delay_calculator_core #(
   for (genvar i_slt = 0; i_slt < NumRSlots; i_slt = i_slt + 1) begin : gen_raddrs_perslt
     for (genvar i_bit = 0; i_bit < MaxBurstEffLen; i_bit = i_bit + 1) begin : gen_raddrs
       if (i_bit == 0) begin
-        assign slt_raddr_lsbs[i_slt][0] = rslt_q[i_slt].addr[BurstAddrLSBs-1:0];
+        assign slt_raddr_lsbs[i_slt][0] = BurstAddrLSBs'(rslt_q[i_slt].addr);
       end else begin
         always_comb begin
           if (rslt_q[i_slt].burst_fixed) begin
-            assign slt_raddr_lsbs[i_slt][i_bit] = rslt_q[i_slt].addr[BurstAddrLSBs-1:0];
+            slt_raddr_lsbs[i_slt][i_bit] = BurstAddrLSBs'(rslt_q[i_slt].addr);
           end else begin
-            assign slt_raddr_lsbs[i_slt][i_bit] = BurstAddrLSBs'(slt_raddr_lsbs[i_slt][i_bit - 1] +
+            slt_raddr_lsbs[i_slt][i_bit] = BurstAddrLSBs'(slt_raddr_lsbs[i_slt][i_bit - 1] +
                 BurstAddrLSBs'(get_effective_burst_size(AxSizeWidth'(rslt_q[i_slt].burst_size))));
           end
         end

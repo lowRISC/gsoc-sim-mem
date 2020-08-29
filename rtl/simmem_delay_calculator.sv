@@ -75,14 +75,14 @@ module simmem_delay_calculator #(
 
   // Counters for the write data without address yet. If negative, then it means, that the core is
   // still awaiting data write data.
-  logic signed [MaxPendingWDataW:0] wdata_cnt_d;
-  logic signed [MaxPendingWDataW:0] wdata_cnt_q;
+  logic signed [MaxPendingWDataW-1:0] wdata_cnt_d;
+  logic signed [MaxPendingWDataW-1:0] wdata_cnt_q;
 
   // Valid signal for the write data from the delay calculator core.
   logic core_wdata_valid_input;
   // Determines whether the core is ready to receive new data.
   logic core_wdata_ready;
-  assign core_wdata_ready = wdata_cnt_q[MaxPendingWDataW];
+  assign core_wdata_ready = wdata_cnt_q[MaxPendingWDataW-1];
 
   // Counts how many data requests have been received before or with the write address request.
   logic [MaxBurstLenField-1:0] wdata_immediate_cnt;
@@ -106,7 +106,7 @@ module simmem_delay_calculator #(
       // data coming in during the same cycle as the address. Safety of this operation is granted by
       // the order in which wdata_cnt_d is updated in the combinatorial block.
       wdata_immediate_cnt = 0;
-      if (!wdata_cnt_d[MaxPendingWDataW]) begin
+      if (!wdata_cnt_d[MaxPendingWDataW-1]) begin
         // If wdata_cnt_d is nonnegative, then consider sending immediate data
         if (AxLenWidth'(wdata_cnt_d) >= get_effective_burst_len(waddr_i.burst_len)) begin
           // If wdata_cnt_d is nonnegative and all the data associated with the address has arrived
