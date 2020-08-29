@@ -18,6 +18,7 @@
 #include "simmem_axi_structures.h"
 #include "verilated.h"
 #include <cassert>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <queue>
@@ -1104,9 +1105,11 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
       // Displays the delay for the sent and received message for each write
       // address request. The payload field helps identifying the message in the
       // waveforms.
-      std::cout << "Delay: " << std::dec << out_time - in_time << std::hex
-                << " (waddr: " << in_waddr.to_packed()
-                << ", wrsp: " << out_wrsp.to_packed() << ")." << std::endl;
+      std::cout << "Delay: " << std::setw(4) << std::dec << out_time - in_time
+                << std::hex << " (waddr: " << in_waddr.to_packed()
+                << ", wrsp marker: " << out_wrsp.to_packed() << " (expected "
+                << (in_waddr.to_packed() & tb->simmem_get_wrsp_mask()) << "))."
+                << std::endl;
 
       if ((in_waddr.to_packed() & tb->simmem_get_wrsp_mask()) !=
           out_wrsp.to_packed()) {
@@ -1120,6 +1123,7 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
 
   // Second, read data delays are checked. Implementation is simplified by
   // assuming a fixed burst length.
+  size_t num_rdata_mismatches = 0;
   std::cout << "\n\n#### Read data ####" << std::endl;
 
   // rdata_id_in_burst stores the current position in a read burst, useful to
@@ -1149,13 +1153,32 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
       }
       rdata_out_queues[curr_id].pop();
 
-      // Displays the delay for the sent and received message for each read
-      // address request.
-      std::cout << "Delay: " << std::dec << out_time - in_time << std::hex
-                << " (raddr: " << in_raddr.to_packed()
-                << ", rdata id: " << curr_rdata_id << ")." << std::endl;
+      // Mask for the LSBs of the address embedded in the read data for testing
+      // purposes. This field is expected to be the address of the raddr plus
+      // the read data identifier in the burst.
+      uint64_t wdata_addr_bits_mask =
+          ~((1L << (PackedW - 1)) >> (PackedW - 1 - MaxBurstEffSizeBytes));
+
+      std::cout << "Delay: " << std::setw(4) << std::dec << out_time - in_time
+                << std::hex << " (raddr: " << in_raddr.to_packed()
+                << ", rdata marker: "
+                << ((out_rdata.to_packed() >> IDWidth) & wdata_addr_bits_mask)
+                << " (expected: "
+                << (((in_raddr.to_packed() >> IDWidth) + curr_rdata_id) &
+                    wdata_addr_bits_mask)
+                << "), rdata id: " << curr_rdata_id << ")." << std::endl;
+
+      if (((out_rdata.to_packed() >> IDWidth) & wdata_addr_bits_mask) !=
+          (((in_raddr.to_packed() >> IDWidth) + curr_rdata_id) &
+           wdata_addr_bits_mask)) {
+        num_rdata_mismatches++;
+      }
     }
   }
+
+  // Checks for response ordering.
+  std::cout << "\nRead data mismatches: " << std::dec << num_rdata_mismatches
+            << std::endl;
 }
 
 int main(int argc, char **argv, char **env) {
