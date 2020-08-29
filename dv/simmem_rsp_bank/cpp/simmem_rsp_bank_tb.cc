@@ -15,12 +15,6 @@
 //  testbench randomly applies
 //    inputs and observe output delays and contents.
 
-// As the reservation and response actions are decorellated, deadlock situations
-// may appear, especially for low ratios NumIds over bank capacity. Those are
-// due to the fact that one input response has an AXI ID which has not been
-// reserved yet, but all cells are already reserved for other IDs. This issue
-// does not appear at the toplevel, where reservations are made realistically.
-
 #include "Vsimmem_rsp_bank.h"
 #include "verilated.h"
 #include <cassert>
@@ -341,6 +335,13 @@ size_t randomized_testbench(WriteRspBankTestbench *tb, size_t num_ids,
   for (size_t i = 0; i < num_cycles; i++) {
     iteration_announced = false;
 
+    // Setting a new input identifier prevents the deadlock situation where all
+    // the RAM extended cells are reserved for AXI IDs different from the
+    // identifier of the input. This deadlock situation is not representative of
+    // real operation, where deadlocks are prevented by the reservation
+    // mechanism.
+    current_input_id = ids[rand() % num_ids];
+
     // Randomize the boolean signals deciding which interactions will happen in
     // this cycle.
     reserve = (bool)(rand() & 1);
@@ -434,7 +435,7 @@ size_t randomized_testbench(WriteRspBankTestbench *tb, size_t num_ids,
   size_t num_mismatches = 0;
   for (size_t i = 0; i < num_ids; i++) {
     if (kPairsVerbose) {
-      std::cout << std::dec << "--- ID: " << i << " ---" << std::endl;
+      std::cout << std::dec << "--- AXI ID: " << i << " ---" << std::endl;
     }
     while (!input_queues[i].empty() && !output_queues[i].empty()) {
       current_input = input_queues[i].front();
