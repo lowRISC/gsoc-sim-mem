@@ -8,7 +8,7 @@
 //  * Response ordering per AXI identifier.
 //
 // The testbench is divided into 2 parts:
-//  * Definition of the WriteRspBankTestbench class, which is the interface with
+//  * Definition of the RspBankTestbench class, which is the interface with
 //  the design under
 //    test.
 //  * Definition of a manual and a randomized testbench. The randomized
@@ -37,8 +37,9 @@ const int kResetLength = 5;  // Cycles
 // Depth of the trace.
 const int kTraceLevel = 6;
 
-const int kIdWidth = 2;              // AXI identifier width
-const int kRspWidth = 4 + kIdWidth;  // Whole response width
+// These must match with the IDWidth and XRespWidth defined in rtl/simmem_pkg.sv
+const int kIdWidth = 2;   // AXI identifier width
+const int kRspWidth = 4;  // Whole response width
 
 // Testbench choice.
 typedef enum { MANUAL_TEST, RANDOMIZED_TEST } test_strategy_e;
@@ -46,26 +47,26 @@ const test_strategy_e kTestStrategy = RANDOMIZED_TEST;
 
 // Determines the number of independent testbenches are performed in the
 // randomized testbench. Set to 1 to proceed with wave analysis.
-const size_t NUM_RANDOM_TEST_ROUNDS = 100;
+const size_t kNumRandomTestRounds = 100;
 
 // Determines the number of steps per randomized testbench round.
-const size_t NUM_RANDOM_TEST_STEPS = 1000;
+const size_t kNumRandomTestSteps = 1000;
 
 // Determines the number of AXI identifiers involved in the randomized
 // testbench.
-const size_t NUM_IDENTIFIERS = 2;
+const size_t kNumIdentifiers = 2;
 
 typedef Vsimmem_rsp_bank Module;
 typedef std::map<uint32_t, std::queue<uint32_t>> queue_map_t;
 
 // This class implements elementary interaction with the design under test.
-class WriteRspBankTestbench {
+class RspBankTestbench {
  public:
   /**
    * @param record_trace set to false to skip trace recording
    */
-  WriteRspBankTestbench(bool record_trace = true,
-                        const std::string &trace_filename = "sim.fst")
+  RspBankTestbench(bool record_trace = true,
+                   const std::string &trace_filename = "sim.fst")
       : tick_count_(0l), record_trace_(record_trace), module_(new Module) {
     if (record_trace) {
       trace_ = new VerilatedFstC;
@@ -75,13 +76,13 @@ class WriteRspBankTestbench {
 
     // Puts ones at the fields' places
     id_mask_ = ~((1 << 31) >> (31 - kIdWidth));
-    content_mask_ = ~((1 << 31) >> (31 - kRspWidth + kIdWidth)) & ~id_mask_;
+    content_mask_ = ~((1 << 31) >> (31 - kRspWidth)) & ~id_mask_;
 
     // The delay bank is supposedly always ready to receive address requests.
     module_->delay_calc_ready_i = 1;
   }
 
-  ~WriteRspBankTestbench(void) { simmem_close_trace(); }
+  ~RspBankTestbench(void) { simmem_close_trace(); }
 
   void simmem_reset(void) {
     module_->rst_ni = 0;
@@ -151,7 +152,7 @@ class WriteRspBankTestbench {
    */
   uint32_t simmem_input_rsp_apply(uint32_t identifier, uint32_t rsp) {
     // Checks if the given values are not too big
-    assert(!(rsp >> (kRspWidth - kIdWidth)));
+    assert(!(rsp >> kRspWidth));
     assert(!(identifier >> kIdWidth));
 
     uint32_t in_rsp = rsp << kIdWidth | identifier;
@@ -246,7 +247,7 @@ class WriteRspBankTestbench {
  *
  * @param tb a pointer to a fresh testbench instance
  */
-void manual_test(WriteRspBankTestbench *tb) {
+void manual_test(RspBankTestbench *tb) {
   tb->simmem_reset();
 
   // Apply reservation requests for 4 ticks
@@ -278,14 +279,14 @@ void manual_test(WriteRspBankTestbench *tb) {
 /**
  * This function implements a more complete, randomized and automatic testbench.
  *
- * @param tb A pointer the the already contructed WriteRspBankTestbench object.
+ * @param tb A pointer the the already contructed RspBankTestbench object.
  * @param num_ids The number of AXI identifiers to involve. Must be at
  * least 1, and lower than 1 << kIdWidth.
  * @param seed The seed for the randomized test.
  * @param num_cycles The number of simulated clock cycles.
  */
-size_t randomized_testbench(WriteRspBankTestbench *tb, size_t num_ids,
-                            unsigned int seed, size_t num_cycles = 1000) {
+size_t randomized_testbench(RspBankTestbench *tb, size_t num_ids,
+                            unsigned int seed, size_t num_cycles) {
   srand(seed);
   assert(num_ids < (1 << kIdWidth));
 
@@ -390,7 +391,6 @@ size_t randomized_testbench(WriteRspBankTestbench *tb, size_t num_ids,
       }
 
       // Renew the input data if the input handshake is successful
-      current_input_id = ids[rand() % num_ids];
       current_content =
           (uint32_t)((rand() & tb->simmem_get_content_mask()) >> kIdWidth);
     }
@@ -460,19 +460,20 @@ int main(int argc, char **argv, char **env) {
   // Counts the number of mismatches during the whole test
   size_t total_num_mismatches = 0;
 
-  for (unsigned int seed = 0; seed < NUM_RANDOM_TEST_ROUNDS; seed++) {
+  for (unsigned int seed = 0; seed < kNumRandomTestRounds; seed++) {
     // Counts the number of mismatches during the loop iteration
     size_t local_num_mismatches;
 
     // Instantiate the DUT instance
-    WriteRspBankTestbench *tb = new WriteRspBankTestbench(true, "rsp_bank.fst");
+    RspBankTestbench *tb = new RspBankTestbench(true, "rsp_bank.fst");
 
     // Perform one test for the given seed
     if (kTestStrategy == MANUAL_TEST) {
       manual_test(tb);
       break;
     } else if (kTestStrategy == RANDOMIZED_TEST) {
-      local_num_mismatches = randomized_testbench(tb, NUM_IDENTIFIERS, seed);
+      local_num_mismatches =
+          randomized_testbench(tb, kNumIdentifiers, seed, kNumRandomTestSteps);
     }
 
     total_num_mismatches += local_num_mismatches;
