@@ -7,7 +7,7 @@
 // makes sure that write data requests are not seen by the delay calculator core before the
 // corresponding write address. To ensure this property, and as the write data request content is
 // irrelevant to delay estimation (in particular, it does not contain an AXI identifier in the
-// targeted stadard AXI 4), this wrapper maintains an unsigned counter of snooped write data
+// targeted stadard AXI 4), this wrapper maintains a signed counter of snooped write data
 // requests that do not have a write address yet. When the corresponding write address request comes
 // in, it is immediately transmitted to the delay calculator core, along with the corresponding
 // count of write data requests already (or concurrently) received.
@@ -78,7 +78,7 @@ module simmem_delay_calculator #(
   logic signed [MaxPendingWDataW:0] wdata_cnt_d;
   logic signed [MaxPendingWDataW:0] wdata_cnt_q;
 
-  // Delay calculator core I/O signals for the write data.
+  // Valid signal for the write data from the delay calculator core.
   logic core_wdata_valid_input;
   // Determines whether the core is ready to receive new data.
   logic core_wdata_ready;
@@ -114,8 +114,7 @@ module simmem_delay_calculator #(
           // delay calculator core.
           wdata_immediate_cnt = get_effective_burst_len(waddr_i.burst_len);
         end else begin
-          // Else, transmit only the already and currently received write data, and set the counter
-          // to zero, as it has been emptied.
+          // Else, transmit only the already and currently received write data.
           wdata_immediate_cnt = wdata_cnt_d[MaxBurstLenField - 1:0];
         end
       end

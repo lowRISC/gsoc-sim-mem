@@ -10,11 +10,9 @@
 //  * Definition of the SimmemTestbench class, which is the interface with the
 //  design under test.
 //  * Definition of a RealMem class, which emulates a simple and instantaneous
-//  real memory
-//    controller, which immediately responds to requests.
+//  real memory controller, which immediately responds to requests.
 //  * Definition of a manual and a randomized testbench. The randomized
-//  testbench randomly applies
-//    inputs and observe output delays and contents.
+//  testbench randomly applies inputs and observe output delays and contents.
 
 #include "Vsimmem_top.h"
 #include "simmem_axi_structures.h"
@@ -78,7 +76,7 @@ typedef std::map<uint64_t, std::queue<std::pair<size_t, WriteResponse>>>
 typedef std::map<uint64_t, std::queue<std::pair<size_t, ReadData>>>
     rdata_time_queue_map_t;
 
-// This class implements elementary operations for the testbench
+// This class implements elementary interaction with the design under test.
 class SimmemTestbench {
  public:
   /**

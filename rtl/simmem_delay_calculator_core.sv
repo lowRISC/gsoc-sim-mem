@@ -4,10 +4,10 @@
 
 // The delay calculator core is responsible for snooping the traffic from the requester with the
 // help of its delay calculator wrapper and deducing the enable signals for the message banks.
-// Wrapped in the delay calculator module, it can assume that no write data request arrives before
+// Wrapped in the delay calculator module, it assumes that no write data request arrives before
 // the corresponding write address request.
 //
-// Overview: The pendin requests are stored in arrays of slots (one array of wslt_t for write
+// Overview: The pending requests are stored in arrays of slots (one array of wslt_t for write
 // requests and one array of rslt_t for read requests). For burst support, each slot supports status
 // information for each of the single corresponding requests:
 //  * data_v: 1'b0 iff the corresponding request has not arrived yet.
@@ -39,11 +39,11 @@
 // * There are no separate read data requests. Therefore, the read slots do not have data_v bit
 //   arrays.
 // * There is one response per read data, as opposed to only one per write slot. Therefore, the read
-//   output has counters to hold the number of burst data to be released. Also, the counter is
+//   output has counters to hold the number of burst data to be released. Also, read output counters
 //   notified everytime a read data completes.
-// * As all read data arrives at the same time, they don't require individual ages.
+// * As all read data arrive at the same time, they don't require individual ages.
 //
-// Scheduling strategy: The implemented strategy is aggressive FR-FCFS (first-ready
+// Scheduling strategy: The implemented strategy is FR-FCFS (first-ready
 // first-come-first-served). Priorities are given in the decreasing order:
 // * The request and the corresponding rank must be ready.
 // * The response time of the response bank must be minimal.
@@ -56,14 +56,14 @@
 // * For each write address request (i.e., one age entry for each write slot).
 // * For each read address request (i.e., one age entry for each read slot).
 //
-// Two distinct age matrices: As write address requests ages are never compared to something else
+// Two distinct age matrices: As write address requests ages are never compared with something else
 // than another write address request (or equivalently, write slot age), those are held in a
 // separate, smaller age matrix.
 //
 // Request cost: Three costs (measured in clock cycles) are supported by the delay calculator:
 // * Cost of row hit (RowHitCost): if the requested row was in the row buffer.
 // * Cost of activation + row hit (RowHitCost + ActivationCost): if no row was in the row buffer.
-// * Cost of precharge + activation + row hit (RowHitCost + ActivationCost + PrechargeCost): if the
+// * Cost of precharge + activation + row hit (RowHitCost + ActivationCost + PrechargeCost): if
 //   another row was in the row buffer. DRAM refreshing is not simulated.
 //
 // Cost categorization: As the entropy of the cost values is very low (takes only 3 values), they
@@ -145,6 +145,7 @@ module simmem_delay_calculator_core #(
   // COST_NO_CANDIDATE is a special state: if the optimal cost for all the candidates for a rank is
   // COST_NO_CANDIDATE, then it means that the set of candidates for this rank is the empty set.
   } mem_cost_category_e;
+
   // The NumCostCats constant determines how many disjoint reductions will be needed: for each
   // (rank, category) pair, an optimal entry is calculated. Therefore, it does not count the
   // COST_NO_CANDIDATE category.
@@ -152,13 +153,13 @@ module simmem_delay_calculator_core #(
   localparam int unsigned NumCostCatsW = $clog2(NumCostCats);
 
   /**
-  * Determines and compresses the cost of a request, depending on the requested address and the
+  * Determines the cost of a request, depending on the requested address and the
   * current status of the corresponding rank.
   *
   * @param address the requested address.
   * @param is_row_open 1'b1 iff a row is currently open in the corresponding rank.
   * @param open_row_buf_ident the start address of the open row, if applicable.
-  * @return the cost of the access, in clock cycles.
+  * @return the cost category of the access, in clock cycles.
   */
   function automatic mem_cost_category_e det_cost_cat(
       logic [GlobalMemCapaW-1:0] address, logic is_row_open,
@@ -176,8 +177,8 @@ module simmem_delay_calculator_core #(
   /**
   * Decategorizes a request cost to retrieve the actual value from its category.
   *
-  * @param cost_category the categorized cost.
-  * @return the actual cost corresponding to this categorized cost.
+  * @param cost_category the cost category.
+  * @return the actual cost corresponding to this cost category.
   */
   function automatic logic [DelayW-1:0] decategorize_mem_cost(
       mem_cost_category_e cost_category);
@@ -205,7 +206,8 @@ module simmem_delay_calculator_core #(
 
   /**
   * Determines to which rank a given address is assigned. It uses the least significant bits for
-  * interleaving.
+  * interleaving. As NumRanks must be 1 as rank interleaving is currently not fully supported, it
+  * currently systematically returns 0.
   *
   * @param address the input address.
   * @return the rank index to which the address is assigned.
@@ -225,9 +227,9 @@ module simmem_delay_calculator_core #(
   // As their shape and treatment is different, slots for read and write bursts are disjoint: there
   // is one array of slots for read bursts, and one array for write bursts.
 
-  // Maximal number of write data entries: at most MaxBurstEffLen per slot.
+  // Maximal number of write data entries: at most MaxBurstEffLen entries per slot.
   localparam MaxNumWEntries = NumWSlots * MaxBurstEffLen;
-  // Maximal number of read data entries: at most MaxBurstEffLen per slot.
+  // Maximal number of read data entries: at most MaxBurstEffLen entries per slot.
   localparam MaxNumREntries = NumRSlots * MaxBurstEffLen;
 
   // Slot type definition
@@ -258,8 +260,8 @@ module simmem_delay_calculator_core #(
   rslt_t rslt_d[NumRSlots];
   rslt_t rslt_q[NumRSlots];
 
-  // Candidate signals calculation: is a write data request candidate for a given (rank, category)
-  // pair.
+  // Candidate signals calculation: for each write data request, here is determined whether is is
+  // acandidate for a given (rank, category) pair.
   logic [MaxBurstEffLen-1:0] is_wd_cand_cat_mhot[NumRanks][NumCostCats][NumWSlots];
   // Is a read data request candidate for a given (rank, category) pair.
   logic [MaxBurstEffLen-1:0] is_rdata_cand_cat_mhot[NumRanks][NumCostCats][NumRSlots];
@@ -302,6 +304,8 @@ module simmem_delay_calculator_core #(
   for (genvar i_rk = 0; i_rk < NumRanks; i_rk = i_rk + 1) begin : det_rdata_outer
     for (genvar i_cat = 0; i_cat < NumCostCats; i_cat = i_cat + 1) begin : det_rdata_cat
       for (genvar i_slt = 0; i_slt < NumRSlots; i_slt = i_slt + 1) begin : det_rdata
+        // Transform the multi-hot is_rdata_cand_cat_mhot[i_rk][i_cat][i_slt] into the one-hot
+        // slt_nxt_data_cat_onehot signal [i_rk][i_cat][i_slt].
         assign slt_nxt_data_cat_onehot[i_rk][i_cat][i_slt][0] =
             is_rdata_cand_cat_mhot[i_rk][i_cat][i_slt][0];
         for (genvar i_bit = 1; i_bit < MaxBurstEffLen; i_bit = i_bit + 1) begin : det_rdata_inner
@@ -380,7 +384,7 @@ module simmem_delay_calculator_core #(
   // and a maximal write burst length of 2 write data (D) per write address (the x symbols represent
   // boolean values asserting "row is older than column").
   //
-  // Main age matrix (main_age_matrix_d/main_age_matrix_q):
+  // Main age matrix:
   //
   // *   D D D D D D R R R R R
   // *
@@ -396,7 +400,7 @@ module simmem_delay_calculator_core #(
   // * R                     x
   // * R
   //
-  // Write slot age matrix (wslt_main_age_matrix_d/wslt_main_age_matrix_q):
+  // Write slot age matrix:
   //
   // *   W W W
   // *
@@ -607,7 +611,7 @@ module simmem_delay_calculator_core #(
   // Find next slot where write data fits //
   //////////////////////////////////////////
 
-  // In this part, the signals indicating in which slot and in which write data entry, a new write
+  // In this part, the signals indicating in which slot and in which write data entry a new write
   // data request should fit. If there is no candidate, then refuse incoming write data requests
   // (they will be counted by the delay counter wrapper).
   //
@@ -764,12 +768,11 @@ module simmem_delay_calculator_core #(
     main_new_entry = '{default: '0};
     wslt_new_entry = '{default: '0};
 
-
     ////////////////////////////
     // Address requests input //
     ////////////////////////////
 
-    // This part is dedicated to the the acceptation of write or read address requests.
+    // This part is dedicated to the the acceptance of write or read address requests.
 
     // To favor read requests, swap this part with the following part.
 
@@ -819,7 +822,6 @@ module simmem_delay_calculator_core #(
         end
       end
     end
-
 
     //////////////////////////////
     // Write data request input //
@@ -886,8 +888,8 @@ module simmem_delay_calculator_core #(
 
     // This part is dedicated to updating the rank counters and row state signals.
 
-    // If the rank counter is not zero, then simply decrement it.
     for (int unsigned i_rk = 0; i_rk < NumRanks; i_rk = i_rk + 1) begin
+      // If the rank counter is not zero, then decrement it.
       if (rank_delay_cnt_q[i_rk] != 0) begin
         // A row is now open in the corresponding rank.
         is_row_open_d[i_rk] = 1'b1;
@@ -953,7 +955,7 @@ module simmem_delay_calculator_core #(
       end
     end
 
-    // Input signals from message banks about released signals
+    // Input signals from message banks about the released iid.
     wrsp_release_en_mhot_d ^= wrsp_released_iid_onehot_i;
 
     // Decrement the rdata_release_en_cnts_d if data has been released for this address (aka. iid).
@@ -971,7 +973,7 @@ module simmem_delay_calculator_core #(
     // Slot liberation //
     /////////////////////
 
-    // This part is dedicated to free complete slots and notify the outputs in thiis case.
+    // This part is dedicated to freeing complete slots and notify the outputs in this case.
 
     // Write slots
     for (int unsigned i_slt = 0; i_slt < NumWSlots; i_slt = i_slt + 1) begin

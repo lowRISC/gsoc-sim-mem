@@ -93,7 +93,8 @@ const uint64_t ReadData::rsp_off = ReadData::data_off + ReadData::data_w;
 const uint64_t ReadData::last_off = ReadData::rsp_off + ReadData::rsp_w;
 
 /**
- * Helper function to parse a packed structure representation
+ * Helper function to parse a packed structure representation to get a given
+ * field.
  *
  * @param packed the packed structure representation
  * @param field_w the field representation width (bits)
@@ -167,9 +168,9 @@ uint64_t WriteAddress::to_packed() {
   return packed;
 }
 
-///////////////////////////
+//////////////////////////
 // Read address request //
-///////////////////////////
+//////////////////////////
 
 void ReadAddress::from_packed(uint64_t packed) {
   id = single_from_packed(packed, id_w, id_off);
