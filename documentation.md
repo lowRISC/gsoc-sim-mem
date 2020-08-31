@@ -2,7 +2,7 @@
 
 ## Outline
 
-This project has been initiated as a [Google Summer of Code](https::/summerofcode.withgoogle.com) 2020 project at lowRISC CIC.
+This project has been initiated as a [Google Summer of Code](https://summerofcode.withgoogle.com) 2020 project at lowRISC CIC.
 
 As the gap between CPU and main memory frequency has dramatically increased in the past decades, a CPU typically interacts with a relatively slow main memory, which requires a considerable number of cycles to output data.
 
@@ -19,7 +19,80 @@ No changes are required neither in the real memory controller, nor in the CPU.
 
 ## Table of Contents
 
-[TOC]
+   * [Simulated memory controller](#simulated-memory-controller)
+      * [Outline](#outline)
+      * [Features](#features)
+      * [Table of Contents](#table-of-contents)
+      * [How to use](#how-to-use)
+         * [Integration](#integration)
+         * [Parameters](#parameters)
+         * [Remarks](#remarks)
+      * [Overview](#overview)
+         * [Requests](#requests)
+         * [Responses](#responses)
+         * [Top-level overview](#top-level-overview)
+            * [Top-level microarchitecture](#top-level-microarchitecture)
+            * [Top-level flow](#top-level-flow)
+      * [Response banks](#response-banks)
+         * [High-level design](#high-level-design)
+         * [Reservations](#reservations)
+         * [RAMs](#rams)
+         * [Extended RAM cells](#extended-ram-cells)
+         * [Linked list implementation](#linked-list-implementation)
+            * [Linked list pointers](#linked-list-pointers)
+            * [Lengths](#lengths)
+            * [Extended cell state](#extended-cell-state)
+               * [Internal counters](#internal-counters)
+               * [Elementary cell offset](#elementary-cell-offset)
+            * [Linked list detailed operation](#linked-list-detailed-operation)
+               * [Reservation](#reservation)
+               * [Response acquisition](#response-acquisition)
+               * [Response release](#response-release)
+            * [Output data](#output-data)
+            * [Additional response bank features](#additional-response-bank-features)
+               * [Release enable double-check](#release-enable-double-check)
+      * [Delay calculator](#delay-calculator)
+         * [Scheduling strategy](#scheduling-strategy)
+         * [Design](#design)
+            * [Address request slots](#address-request-slots)
+            * [Delay estimation](#delay-estimation)
+            * [Release enable structures](#release-enable-structures)
+         * [Age management](#age-management)
+            * [Write slot age matrix](#write-slot-age-matrix)
+            * [Main age matrix](#main-age-matrix)
+         * [Finding optimal entries](#finding-optimal-entries)
+         * [Detailed slot operation](#detailed-slot-operation)
+            * [Request acceptance](#request-acceptance)
+               * [Write requests](#write-requests)
+               * [Read requests](#read-requests)
+            * [Entry and slot liberation](#entry-and-slot-liberation)
+               * [Write requests](#write-requests-1)
+               * [Read data](#read-data)
+            * [Rank state update](#rank-state-update)
+         * [Burst support and addressing](#burst-support-and-addressing)
+            * [Burst support](#burst-support)
+            * [Entry addressing](#entry-addressing)
+      * [Testbenches](#testbenches)
+         * [Response bank testbench](#response-bank-testbench)
+            * [Parameters](#parameters-1)
+            * [Random testing process](#random-testing-process)
+            * [Usage](#usage)
+         * [Toplevel testbench](#toplevel-testbench)
+            * [Architecture](#architecture)
+            * [Parameters](#parameters-2)
+               * [AXI dimensions](#axi-dimensions)
+               * [Main testbench parameters](#main-testbench-parameters)
+            * [Random testing process](#random-testing-process-1)
+            * [Usage](#usage-1)
+      * [Future work](#future-work)
+         * [Delay calculator](#delay-calculator-1)
+            * [DRAM refreshing](#dram-refreshing)
+            * [Rank interleaving](#rank-interleaving)
+            * [Request cost precision](#request-cost-precision)
+            * [Scheduling strategy](#scheduling-strategy-1)
+         * [Response banks](#response-banks-1)
+            * [Scalable burst management](#scalable-burst-management)
+            * [Replacement of linked list lengths](#replacement-of-linked-list-lengths)
 
 ## How to use
 
@@ -39,10 +112,11 @@ The simulated memory controller has four ports:
 
 They are of two kinds of parameters.
 First, some parameters determine the AXI field dimensions:
+
 - They are grouped in the _AXI signals_ section of _rtl/simmem_pkg.sv_.
 - Some AXI field dimensions are additionally re-defined in the Verilog wrapper.
 - Some AXI field dimensions are additionally defined in _dv/simmem_top/cpp/simmem_axi_dimensions.h_.
-All the fields in these three documents must match.
+  All the fields in these three documents must match.
 
 Second, parameters related to the simulated memory controller itself, defined in the _Simmem_ parameters_ section of _rtl/simmem_pkg.sv_:
 
@@ -168,7 +242,7 @@ Each response bank uses three dual-port RAM banks:
 - _i_payload_ram_, responsible for storing the responses before they are transmitted to the requester.
   As there is one linked list per AXI identifier, the AXI identifier is not stored in the RAM, but deduced from its linked list identifier when it is released.
 - _i_meta_ram_out_tail_ and _i_meta_ram_out_head_, responsible for storing the linked list states: for each linked list element, they store the pointer to the next element in the payload RAM.
-These are called _metadata RAMs_.
+  These are called _metadata RAMs_.
 
 Two RAM banks are used to hold pointer to next elements, as three ports are needed (which is explained by the linked list implementation below).
 Their content is therefore maintained identical, but they may be read at different addresses simultaneously.
@@ -234,7 +308,7 @@ Linked lists are logical structures maintained by the _i_meta_ram_out_tail_ and 
 The order of the pointers must always be respected.
 They can be equal but never overtake each other, in the order defined by the linked list.
 
-One challenge when implementing the response banks is the one-cycle latency to produce the  output.
+One challenge when implementing the response banks is the one-cycle latency to produce the output.
 Therefore, two distinct tail pointers are required to dynamically manage the two following cases, to achieve maximum bandwidth:
 
 - The pre_tail address is given as input to the payload RAM if there is a successful output handshake.
@@ -372,7 +446,7 @@ Else:
 
 - _Reservation head_: Remains untouched.
 - _Response head_: Remains untouched.
-- _Pre_tail_: If the pre_tail is different from (_i.e._, strictly behind) the response head, then it is updated from the metadata RAM.
+- _Pre_tail_: If the pre*tail is different from (\_i.e.*, strictly behind) the response head, then it is updated from the metadata RAM.
   Else, it is piggybacked with the response head.
 - _Tail_: Takes the previous value of the pre_tail.
 - _Meta RAMs_: Is read at the address _pre_tails_, to possibly update the pre*tail from the linked list pointers stored in RAM (see the \_Pre_tail* point above).
@@ -477,11 +551,11 @@ Memory access delays, for a scheduled memory request, depend on multiple paramet
 When a simulated memory operation starts, the decrementing counter is set to a value corresponding to the situation:
 
 1. If this is a row hit: if the memory request maps to a row already open in a row buffer.
-  It is allocated the cost of a _column access strobe_.
+   It is allocated the cost of a _column access strobe_.
 2. If this is a row miss, and there was no row in the row buffer.
-  It is allocated the cost of a _column access strobe_ plus an _activation_ delay.
+   It is allocated the cost of a _column access strobe_ plus an _activation_ delay.
 3. If this is a row miss, and there was another row in the row buffer.
-  It is allocated the cost of a _column access strobe_ plus an _activation_ delay plus a _precharge_ delay.
+   It is allocated the cost of a _column access strobe_ plus an _activation_ delay plus a _precharge_ delay.
 
 Rank states are represented by two additional elements (in addition to the decrementing counter):
 
@@ -535,8 +609,8 @@ Each row is then masked with the _free_wslt_for_data_mhot_ multi-hot signal, whi
 
 The main age matrix side is the concatenation of two types of entries:
 
-- The _NumWSlots_ x _MaxBurstEffLen_$ elementary write burst entries, addressed as `(slotId << log2(MaxBurstEffLen)) | eid`, where eid is a notation, convenient here but not used in the source code.
- - The _NumRSlots_ read data slots / read address requests.
+- The _NumWSlots_ x _MaxBurstEffLen_\$ elementary write burst entries, addressed as `(slotId << log2(MaxBurstEffLen)) | eid`, where eid is a notation, convenient here but not used in the source code.
+- The _NumRSlots_ read data slots / read address requests.
 
 We have considered the fact that all read elementary burst entries in the same burst share the same age.
 
@@ -595,11 +669,13 @@ Read request acceptance is identical to write address acceptance, except that:
 For each entry in each write and read slot, when the corresponding rank decrementing counter reaches 3, if the _mem_pending_ bit is set, it is unset and the _mem_done_ bit is set.
 This accommodates the propagation delay until the requester, assuming the latter is ready and is referred to as _three-cycles-early_ _mem_done_ setting.
 Operating this way, the memory delay counter becomes:
-* 2 when the (potential) _release enable_ information reaches the input of the release_enable flip-flop. It is _potential_ in the sense, that if the freshly completed entry belongs to a write burst that still contains incomplete entries, then no release enable signal is fired.
-* 1 when the _release enable_ information reaches the input of the RAM in the response banks.
-* 0 when the response reaches the requester.
 
-This means, that all simulated memory delays must be at least 3 cycles. Precisely, setting the column access strobe parameter (_RowHitCost_) to at least 3 is necessary and sufficient in the described model.
+- 2 when the (potential) _release enable_ information reaches the input of the release*enable flip-flop. It is \_potential* in the sense, that if the freshly completed entry belongs to a write burst that still contains incomplete entries, then no release enable signal is fired.
+- 1 when the _release enable_ information reaches the input of the RAM in the response banks.
+- 0 when the response reaches the requester.
+
+This means, that all simulated memory delays must be at least 3 cycles.
+Precisely, setting the column access strobe parameter (_RowHitCost_) to at least 3 is necessary and sufficient in the described model.
 This lower bound is much lower than typical main memory access delays.
 
 ##### Write requests
@@ -641,6 +717,183 @@ The wrap modulo operation is implicitly performed when the adders overflow.
   <figcaption>Fig: Individual burst entry address dynamic calculation</figcaption>
 </figure>
 
+## Testbenches
+
+The repository contains two testbenches running on [Verilator](https://www.veripool.org/wiki/verilator):
+
+- `simmem_rsp_bank_tb.cc`, which tests a response bank.
+- `simmem_top_tb.cc`, which tests the integral simulated memory controller.
+
+Both testbenches provide two modes, selected using the _kTestStrategy_, independently in each testbench source file:
+
+- A manual mode, which allows the user to manually submit inputs and outputs to the design under test.
+- A randomized mode, that automatically and randomly submits input signals to the design under test.
+
+### Response bank testbench
+
+The response bank testing focuses on response ordering for AXI identifiers.
+
+The testbench implementation is divided in 2 parts:
+
+- Definition of the RspBankTestbench class, which is the interface with the design under test.
+- Definition of a manual and a randomized testbench. The randomized testbench randomly applies inputs and observe output delays and contents.
+
+The randomized testbench is not sufficient to ensure that the burst length is managed properly.
+However, burst length errors become obvious when observing read data delays in the toplevel testbench, as read data coming from the same burst, are extremely likely to have very close delays to each other.
+
+#### Parameters
+
+The response bank testbench does not depend on the AXI structures defined for the toplevel testbench described further below, because testing a response bank only requires few parameters:
+
+- **kTransactionsVerbose**: Determines whether all transactions will be displayed.
+- **kPairsVerbose**: Determines whether all the compared (input, output) pairs are displayed at the end of the testbench.
+- **kResetLength**: Determines the duration in cycles of a call to the reset function.
+- **kTraceLevel**: Determines the trace level for the waveform dumps.
+- **kIdWidth**: Determines the width of the AXI identifier field. It must match with the _IDWidth_ parameter defined in `rtl/simmem_pkg.sv`.
+- **kNumIdentifiers**: Determines the number of the AXI identifiers actually used. Only used in randomized testbenches.
+- **kRspWidth**: Determines the whole length of a response. It must match with the _XRespWidth_ parameter defined in `rtl/simmem_pkg.sv`.
+- **kTestStrategy**: Determines whether the chosen testbench is manual or randomized.
+- **kNumRandomTestRounds**: Determines the number of independent tests with consecutive seeds are performed. Only used in randomized testbenches.
+- **kNumRandomTestSteps**: Determines the number of simulated clock cycles where transactions are allowed (excluding the initial reset and the trailing clock cycles). Only used in randomized testbenches.
+
+#### Random testing process
+
+The random testing strategy bases on three Bernoulli random variables of probability 0.5:
+
+- _reserve_: Decides whether a reservation is requested.
+- _apply input_: Decides whether a response input is applied to the design under test.
+- _request input rsp_: Decides whether a ready signal is applied at the output of the design under test.
+
+The random testing phases are the following, for each clock cycle:
+
+1. The three random variables are sampled.
+2. The corresponding inputs are applied to the design under test.
+3. Handshakes are examined and displayed (if _KTransactionsVerbose_ is set).
+   - If the response input handshake is successful, then add the input content to a queue _input_queues_ _[current_input_id]_ that will serve as an ordering reference.
+   - If the response output handshake is successful, then add the output content to a queue _output_queues_ _[current_input_id]_ that will be compared to the ordering reference.
+4. The clock is cycle happens.
+5. All the inputs are reset.
+
+When all the required _kNumRandomTestSteps_ clock cycles have been simulated, followed by 100 trailing cycles, the queues are compared, and the number of mismatches is displayed.
+If kPairsVerbose is set, all the (input, output) pairs are displayed.
+
+The whole proccess is performed _kNumRandomTestRounds_ times.
+
+#### Usage
+
+To run the response bank testbench, execute:
+
+```bash
+> fusesoc run --target=sim_rsp_bank simmem
+```
+
+To additionally get access to the waveforms, continue by executing the following commands:
+
+```bash
+> ./build/simmem_0.1/sim_rsp_bank-verilator/Vsimmem_rsp_bank --trace
+> gtkwave rsp_bank.fst
+```
+
+### Toplevel testbench
+
+The toplevel testbench tests the response ordering and measures the actual delays of responses, precisely between an address request and the corresponding response.
+
+To translate the HDL structures to structures understandable by the C++ testbench, the toplevel testbench uses uint64_t packed variables, which encode the structures, which are then translated to C++ structures.
+This allows direct translation between signals extracted from the DUT and AXI messages.
+
+#### Architecture
+
+The toplevel testbench uses:
+
+- `simmem_axi_dimensions.h` to define the parameters related to AXI field widths.
+- `simmem_axi_structures.h` and `simmem_axi_structures.c` to define the structures that represent the AXI messges. The two main methods are:
+  - _from_packed_: translates a packed representation (on a uint64_t) to an instance of the given struct.
+  - _to_packed_: the converse of _from_packed_.
+- `simmem_top.cc` as the main testbench file. The main testbench implementation is divided in 3 parts:
+- Definition of the SimmemTestbench class, which is the interface with the design under test.
+- Definition of a RealMemoryController class, which emulates a simple and instantaneous real memory controller, which immediately responds to requests.
+- Definition of a manual and a randomized testbench.The randomized testbench randomly applies inputs and observes output delays and contents.
+
+#### Parameters
+
+##### AXI dimensions
+
+All parameters in `simmem_axi_dimensions.h` must match the values defined in `rtl/simmem_pkg.sv`.
+The _PackedW_ constant must remain 64.
+It determines the width on which AXI messages are encoded.
+
+##### Main testbench parameters
+
+- **kTransactionsVerbose**: Determines whether all transactions will be displayed.
+- **kResetLength**: Determines the duration in cycles of a call to the reset function.
+- **kTraceLevel**: Determines the trace level for the waveform dumps.
+- **kWBurstLenField**: Determines the constant burst length field of the write address requests.
+- **kRBurstLenField**: Determines the constant burst length field of the read address requests.
+- **kWBurstSizeField**: Determines the constant burst size field of the write address requests.
+- **kRBurstSizeField**: Determines the constant burst size field of the read address requests.
+- **kNumIdentifiers**: Determines the number of the AXI identifiers actually used. Only used in randomized testbenches.
+- **kTestStrategy**: Determines whether the chosen testbench is manual or randomized.
+- **kSeed**: The seed used in the testbench. Only used in randomized testbenches.
+- **kNumRandomTestSteps**: Determines the number of simulated clock cycles where transactions are allowed (excluding the initial reset and the trailing clock cycles). Only used in randomized testbenches.
+- **kRequesterAlwaysReady**: Detemines whether the requester is always ready to accept the outputs from the design under test. If not, the corresponding ready signals are independent Bernoulli signals of probability 0.5.
+- **kRealmemAlwaysReady**: Detemines whether the real memory controller is always ready to accept the outputs from the design under test. If not, the corresponding ready signals are independent Bernoulli signals of probability 0.5.
+
+#### Random testing process
+
+As opposed to the response bank testbench, the toplevel testbench is less oriented towards massive testing with various seeds, and therefore does not feature automatic re-testing for different seeds.
+
+The random testing strategy bases on three input Bernoulli random variables of probability 0.5, which correspond to the inputs to the toplevel design under test.
+
+- _requester_apply_waddr_input_: Decides whether a reservation is requested.
+- _requester_apply_raddr_input_: Decides whether a response input is applied to the design under test.
+- _requester_apply_wdata_input_: Decides whether a ready signal is applied at the output of the design under test.
+
+The inputs from the real memory controller are always valid, as long as the real memory controller still has responses (write responses or write data) to send.
+
+- _realmem_apply_wrsp_input_: Decides whether the real memory controller inputs a write response.
+- _realmem_apply_rdata_input_: Decides whether the real memory controller inputs read data.
+
+The random testing phases are the following, for each clock cycle:
+
+1. The three input random variables are sampled, as well as the output ready random variables if the corresponding _k\*AlwaysReady_ constants are true.
+2. The corresponding inputs are applied to the design under test.
+3. Input handshakes are examined and displayed (if _KTransactionsVerbose_ is set).
+   - If the write address or read address input handshake is successful, then add the input content and time to a queue _waddr_in_queues_ _[current_address_id]_ (respectively _raddr_in_queues_ _[current_address_id]_) that will serve as time and ordering references.
+   - If a write response input or read data input handshake with the real memory controller is successful, then add the output content and time to a queue _wrsp_in_queues_ _[current_input_id]_ (respectively _rdata_in_queues_ _[current_address_id]_). These queues are not yet used.
+4. Similarly, output handshakes are examined and displayed (if _KTransactionsVerbose_ is set).
+   - If the write address or read address output handshake is successful, then add the input content and time to a queue _waddr_out_queues_ _[current_address_id]_ (respectively _raddr_out_queues_ _[current_address_id]_) These queues are not yet used.
+   - If a write response output or read data output handshake with the requester is successful, then add the output content and time to a queue _wrsp_out_queues_ _[current_input_id]_ (respectively _rdata_out_queues_ _[current_address_id]_). These queues will be compared with the time and ordering references.
+5. All the inputs are reset.
+
+When all the required _kNumRandomTestSteps_ clock cycles have been simulated, followed by 100 trailing cycles, the queues are compared, and the following information, _split by type and per AXI identifier and ordered by increasing arrival time_ is displayed for each address request that has received a response that reached the requester:
+
+- For a write response message
+  - The delay between the input address request and the output response.
+  - The address field of the write address request.
+  - The marker in the write response, corresponding to the _XRespWidth_ least significant bits of the address, along with the expected marker.
+- For _each_ read data message:
+  - The delay between the input address request and the output read data.
+  - The address field of the read address request.
+  - The marker in the read data, corresponding to the _XRespWidth_ least significant bits of the address plus the index of the read data in its burst, along with the expected marker.
+  - The index of the read data in its burst, included between 0 and kRBurstLenField.
+
+As the number of outstanding requests increases, the delay naturally increases, as requests are accepted longer before they can be treated.
+
+#### Usage
+
+To run the response bank testbench, execute:
+
+```bash
+> fusesoc run --target=sim_simmem_top simmem
+```
+
+To additionally get access to the waveforms, continue by executing the following commands:
+
+```bash
+> ./build/simmem_0.1/sim_simmem_top-verilator/Vsimmem_top --trace
+> gtkwave top.fst
+```
+
 ## Future work
 
 ### Delay calculator
@@ -679,6 +932,8 @@ To support much smaller ratios, which typically means, to support larger numbers
 
 #### Replacement of linked list lengths
 
-So far, we have used lengths for sub-parts of the response banks. This can be substituted by the use of the burst counters only. This may be incompatible with the previous future work proposal.
+So far, we have used lengths for sub-parts of the response banks.
+This can be substituted by the use of the burst counters only.
+This may be incompatible with the previous future work proposal.
 
 > View on GitHub: https://github.com/lowRISC/gsoc-sim-mem

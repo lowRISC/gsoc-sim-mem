@@ -9,10 +9,11 @@
 // The testbench is divided into 3 parts:
 //  * Definition of the SimmemTestbench class, which is the interface with the
 //  design under test.
-//  * Definition of a RealMem class, which emulates a simple and instantaneous
-//  real memory controller, which immediately responds to requests.
+//  * Definition of a RealMemoryController class, which emulates a simple and
+//  instantaneous real memory controller, which immediately responds to
+//  requests.
 //  * Definition of a manual and a randomized testbench. The randomized
-//  testbench randomly applies inputs and observe output delays and contents.
+//  testbench randomly applies inputs and observes output delays and contents.
 
 #include "Vsimmem_top.h"
 #include "simmem_axi_structures.h"
@@ -40,8 +41,8 @@ const int kWBurstLenField = 3;
 const int kRBurstLenField = 2;
 
 // Constant burst sizes supplied to the DUT
-const int kWBurstSize = 2;
-const int kRBurstSize = 2;
+const int kWBurstSizeField = 2;
+const int kRBurstSizeField = 2;
 
 // Testbench choice.
 typedef enum { MANUAL_TEST, RANDOMIZED_TEST } test_strategy_e;
@@ -49,13 +50,20 @@ const test_strategy_e kTestStrategy = RANDOMIZED_TEST;
 
 // Determines the number of AXI identifiers involved in the randomized
 // testbench.
-const size_t NUM_IDENTIFIERS = 2;
+const size_t kNumIdentifiers = 2;
 
 // Determines seed for the randomized testbench.
-const unsigned int SEED = 2;
+const unsigned int kSeed = 2;
 
 // Determines the number of steps per randomized testbench.
-const size_t NUM_RANDOM_TEST_STEPS = 1000;
+const size_t kNumRandomTestSteps = 1000;
+
+// Detemine whether the requester and the real memory controller are always
+// ready to accept the outputs from the design under test. If not, the
+// corresponding ready signals are independent Bernoulli signals of probability
+// 0.5.
+const bool kRequesterAlwaysReady = true;
+const bool kRealmemAlwaysReady = true;
 
 typedef Vsimmem_top Module;
 
@@ -704,7 +712,7 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
   requester_current_waddr.id = ids[rand() % num_ids];
   requester_current_waddr.burst_len = kWBurstLenField;
   requester_current_waddr.burst_type = BURST_INCR;
-  requester_current_waddr.burst_size = kWBurstSize;
+  requester_current_waddr.burst_size = kWBurstSizeField;
 
   // Input raddr from the requester
   ReadAddress requester_current_raddr;
@@ -712,7 +720,7 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
   requester_current_raddr.id = ids[rand() % num_ids];
   requester_current_raddr.burst_len = kRBurstLenField;
   requester_current_raddr.burst_type = BURST_INCR;
-  requester_current_raddr.burst_size = kRBurstSize;
+  requester_current_raddr.burst_size = kRBurstSizeField;
 
   // Input wdata from the requester
   WriteData requester_current_wdata;
@@ -757,8 +765,10 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
     requester_apply_wdata_input = (bool)(rand() & 1);
     // The requester is supposedly always ready to get data, for more accurate
     // delay calculation
-    requester_req_wrsp_output = true;
-    requester_req_rdata_output = true;
+    requester_req_wrsp_output =
+        kRequesterAlwaysReady ? true : (bool)(rand() & 1);
+    requester_req_rdata_output =
+        kRequesterAlwaysReady ? true : (bool)(rand() & 1);
 
     /////////////////////
     // Realmem signals //
@@ -771,9 +781,9 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
     realmem_apply_rdata_input = realmem.has_rdata_to_input();
     // The real memory controller is supposedly always ready to get data, for
     // more accurate delay calculation
-    realmem_req_waddr_output = true;
-    realmem_req_raddr_output = true;
-    realmem_req_wdata_output = true;
+    realmem_req_waddr_output = kRealmemAlwaysReady ? true : (bool)(rand() & 1);
+    realmem_req_raddr_output = kRealmemAlwaysReady ? true : (bool)(rand() & 1);
+    realmem_req_wdata_output = kRealmemAlwaysReady ? true : (bool)(rand() & 1);
 
     ////////////////////////////////////////////////////
     // Signal application and readiness for requester //
@@ -834,7 +844,6 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
     if (requester_apply_waddr_input && tb->simmem_requester_waddr_check()) {
       // If the input handshake between the requester and the simmem has been
       // successful for waddr, then accept the input.
-
       waddr_in_queues[requester_current_waddr.id].push(
           std::pair<size_t, WriteAddress>(curr_itern, requester_current_waddr));
       if (kTransactionVerbose) {
@@ -851,14 +860,13 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
       requester_current_waddr.from_packed(rand());
       requester_current_waddr.id = ids[rand() % num_ids];
       requester_current_waddr.burst_len = kWBurstLenField;
-      requester_current_waddr.burst_size = kWBurstSize;
+      requester_current_waddr.burst_size = kWBurstSizeField;
       requester_current_waddr.burst_type = BURST_INCR;
     }
     // raddr handshake
     if (requester_apply_raddr_input && tb->simmem_requester_raddr_check()) {
       // If the input handshake between the requester and the simmem has been
       // successful for raddr, then accept the input.
-
       raddr_in_queues[requester_current_raddr.id].push(
           std::pair<size_t, ReadAddress>(curr_itern, requester_current_raddr));
       if (kTransactionVerbose) {
@@ -874,7 +882,7 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
       requester_current_raddr.from_packed(rand());
       requester_current_raddr.id = ids[rand() % num_ids];
       requester_current_raddr.burst_len = kRBurstLenField;
-      requester_current_raddr.burst_size = kRBurstSize;
+      requester_current_raddr.burst_size = kRBurstSizeField;
       requester_current_raddr.burst_type = BURST_INCR;
     }
     // wdata handshake
@@ -1013,10 +1021,9 @@ void randomized_testbench(SimmemTestbench *tb, size_t num_ids,
     if (requester_req_rdata_output &&
         tb->simmem_requester_rdata_fetch(requester_current_rdata)) {
       // If the output handshake between the requester and the simmem has been
-      // successful, then accept the output. One cycle is added to the delay, as
-      // the data is available to the requester only after the handshake.
+      // successful, then accept the output.
       rdata_out_queues[ids[requester_current_rdata.id]].push(
-          std::pair<size_t, ReadData>(curr_itern + 1, requester_current_rdata));
+          std::pair<size_t, ReadData>(curr_itern, requester_current_rdata));
 
       if (kTransactionVerbose) {
         if (!iteration_announced) {
@@ -1190,7 +1197,7 @@ int main(int argc, char **argv, char **env) {
   if (kTestStrategy == MANUAL_TEST) {
     manual_testbench(tb);
   } else if (kTestStrategy == RANDOMIZED_TEST) {
-    randomized_testbench(tb, NUM_IDENTIFIERS, SEED, NUM_RANDOM_TEST_STEPS);
+    randomized_testbench(tb, kNumIdentifiers, kSeed, kNumRandomTestSteps);
   }
 
   delete tb;
