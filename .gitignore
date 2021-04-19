@@ -3,6 +3,7 @@
 
 # fusesoc result and build directories with special suffixes
 build/
+fusesoc.conf
 
 # Simulation Results
 *.log
